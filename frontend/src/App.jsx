@@ -22,7 +22,12 @@ import {
   LinearProgress,
   Grid,
   alpha,
-  Collapse
+  Collapse,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  useMediaQuery,
+  useTheme as useMuiTheme
 } from '@mui/material'
 import {
   CloudUpload,
@@ -35,37 +40,29 @@ import {
   PlayCircleOutline,
   TipsAndUpdates,
   Psychology,
-  School
+  School,
+  ExpandMore
 } from '@mui/icons-material'
 
 // Helper function to clean and format AI responses
 const formatAIResponse = (text) => {
   if (!text) return ''
   
-  // Remove markdown code blocks
   let cleaned = text.replace(/```[\w]*\n?/g, '')
-  
-  // Convert **bold** to actual bold (we'll handle this in rendering)
-  // For now, just clean it up
   cleaned = cleaned.replace(/\*\*(.*?)\*\*/g, '$1')
-  
-  // Remove extra asterisks
   cleaned = cleaned.replace(/\*/g, '')
-  
-  // Clean up extra newlines (keep max 2)
   cleaned = cleaned.replace(/\n{3,}/g, '\n\n')
   
   return cleaned.trim()
 }
 
-// Helper component to render formatted text with bold support
+// Helper component to render formatted text
 const FormattedText = ({ text }) => {
   const lines = text.split('\n')
   
   return (
     <Box>
       {lines.map((line, index) => {
-        // Check if line is a header (starts with number followed by period, or all caps)
         const isHeader = /^(\d+\.|[A-Z\s]{3,}:)/.test(line.trim())
         const isBullet = line.trim().startsWith('•') || line.trim().startsWith('-')
         
@@ -81,9 +78,9 @@ const FormattedText = ({ text }) => {
               sx={{
                 fontWeight: 700,
                 color: 'primary.main',
-                mt: index > 0 ? 3 : 0,
-                mb: 1.5,
-                fontSize: '1.1rem',
+                mt: index > 0 ? 2 : 0,
+                mb: 1,
+                fontSize: { xs: '1rem', md: '1.1rem' },
               }}
             >
               {line}
@@ -95,11 +92,12 @@ const FormattedText = ({ text }) => {
           return (
             <Typography
               key={index}
-              variant="body1"
+              variant="body2"
               sx={{
                 ml: 2,
-                mb: 1,
-                lineHeight: 1.8,
+                mb: 0.5,
+                lineHeight: 1.6,
+                fontSize: { xs: '0.875rem', md: '1rem' },
                 '&::before': {
                   content: '"• "',
                   color: 'primary.main',
@@ -117,8 +115,8 @@ const FormattedText = ({ text }) => {
         return (
           <Typography
             key={index}
-            variant="body1"
-            sx={{ mb: 1, lineHeight: 1.8 }}
+            variant="body2"
+            sx={{ mb: 0.5, lineHeight: 1.6, fontSize: { xs: '0.875rem', md: '1rem' } }}
           >
             {line}
           </Typography>
@@ -186,15 +184,6 @@ const theme = createTheme({
   shape: {
     borderRadius: 16,
   },
-  shadows: [
-    'none',
-    '0px 2px 4px rgba(0,0,0,0.04)',
-    '0px 4px 8px rgba(0,0,0,0.06)',
-    '0px 8px 16px rgba(0,0,0,0.08)',
-    '0px 12px 24px rgba(0,0,0,0.1)',
-    '0px 16px 32px rgba(0,0,0,0.12)',
-    ...Array(19).fill('0px 20px 40px rgba(0,0,0,0.15)'),
-  ],
   components: {
     MuiButton: {
       styleOverrides: {
@@ -202,16 +191,6 @@ const theme = createTheme({
           borderRadius: 12,
           textTransform: 'none',
           fontWeight: 600,
-          padding: '10px 24px',
-          boxShadow: 'none',
-          '&:hover': {
-            boxShadow: '0px 4px 12px rgba(0,0,0,0.15)',
-          },
-        },
-        contained: {
-          '&:hover': {
-            boxShadow: '0px 6px 16px rgba(0,0,0,0.2)',
-          },
         },
       },
     },
@@ -219,7 +198,6 @@ const theme = createTheme({
       styleOverrides: {
         root: {
           borderRadius: 20,
-          boxShadow: '0px 4px 20px rgba(0,0,0,0.08)',
         },
       },
     },
@@ -227,16 +205,6 @@ const theme = createTheme({
       styleOverrides: {
         rounded: {
           borderRadius: 16,
-        },
-      },
-    },
-    MuiTab: {
-      styleOverrides: {
-        root: {
-          textTransform: 'none',
-          fontWeight: 600,
-          fontSize: '1rem',
-          minHeight: 60,
         },
       },
     },
@@ -251,19 +219,27 @@ function TabPanel({ children, value, index }) {
   )
 }
 
-// Define API URL: Use environment variable in production, or localhost in development
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 function App() {
+  const muiTheme = useMuiTheme()
+  const isMobile = useMediaQuery(muiTheme.breakpoints.down('md'))
+  const isSmallMobile = useMediaQuery(muiTheme.breakpoints.down('sm'))
+  
   const [jdFile, setJdFile] = useState(null)
   const [resumeFile, setResumeFile] = useState(null)
   const [jdText, setJdText] = useState('')
   const [jdUrl, setJdUrl] = useState('')
-  const [tabValue, setTabValue] = useState(0)
+  const [tabValue, setTabValue] = useState(1) // Default to Paste on desktop
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [analyzing, setAnalyzing] = useState(false)
+  const [analysisCache, setAnalysisCache] = useState({})
+
+  const getCacheKey = (jdContent, resumeFileName) => {
+    return `${jdContent.substring(0, 100)}_${resumeFileName}`
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -273,6 +249,20 @@ function App() {
     setResult(null)
     
     try {
+      // Check cache first
+      const cacheKey = getCacheKey(
+        jdText || jdFile?.name || jdUrl,
+        resumeFile?.name
+      )
+      
+      if (analysisCache[cacheKey]) {
+        console.log('✅ Using cached results')
+        setResult(analysisCache[cacheKey])
+        setLoading(false)
+        setAnalyzing(false)
+        return
+      }
+      
       const formData = new FormData()
       
       if (tabValue === 0 && jdFile) {
@@ -294,6 +284,13 @@ function App() {
       })
       
       setResult(response.data)
+      
+      // Save to cache
+      setAnalysisCache(prev => ({
+        ...prev,
+        [cacheKey]: response.data
+      }))
+      
     } catch (error) {
       console.error('Error:', error)
       setError(error.response?.data?.error || error.message || 'An error occurred')
@@ -308,117 +305,127 @@ function App() {
     return hasJD && resumeFile
   }
 
- const handleDownloadResume = async () => {
-  if (!result || !result.success) {
-    alert('Please analyze a resume first!')
-    return
-  }
-  
-  if (!result.data.resume_data) {
-    alert('No resume data available. Please re-analyze your resume.')
-    return
-  }
-  
-  try {
-    setLoading(true)
+  const handleDownloadResume = async () => {
+    if (!result || !result.success) {
+      alert('Please analyze a resume first!')
+      return
+    }
     
-    const formData = new FormData()
-    formData.append('resume_data', JSON.stringify(result.data.resume_data))
+    if (!result.data.resume_data) {
+      alert('No resume data available. Please re-analyze your resume.')
+      return
+    }
     
-    const response = await axios.post(
-      `${API_URL}/download-resume`,
-      formData,
-      {
-        responseType: 'blob',
-        headers: {
-          'Content-Type': 'multipart/form-data'
+    try {
+      setLoading(true)
+      
+      const formData = new FormData()
+      formData.append('resume_data', JSON.stringify(result.data.resume_data))
+      
+      const response = await axios.post(
+        `${API_URL}/download-resume`,
+        formData,
+        {
+          responseType: 'blob',
+          headers: {
+            'Content-Type': 'multipart/form-data'
+          }
         }
-      }
-    )
-    
-    // Determine file extension from response
-    const contentType = response.headers['content-type']
-    const extension = contentType.includes('pdf') ? 'pdf' : 'tex'
-    
-    // Create download link
-    const url = window.URL.createObjectURL(new Blob([response.data]))
-    const link = document.createElement('a')
-    link.href = url
-    link.setAttribute('download', `optimized_resume.${extension}`)
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    
-    alert(`✅ Resume downloaded as ${extension.toUpperCase()}!`)
-  } catch (error) {
-    console.error('Download error:', error)
-    alert('Error downloading resume. Please try again.')
-  } finally {
-    setLoading(false)
+      )
+      
+      const contentType = response.headers['content-type']
+      const extension = contentType.includes('pdf') ? 'pdf' : 'tex'
+      
+      const url = window.URL.createObjectURL(new Blob([response.data]))
+      const link = document.createElement('a')
+      link.href = url
+      link.setAttribute('download', `optimized_resume.${extension}`)
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      
+      alert(`✅ Resume downloaded as ${extension.toUpperCase()}!`)
+    } catch (error) {
+      console.error('Download error:', error)
+      alert('Error downloading resume. Please try again.')
+    } finally {
+      setLoading(false)
+    }
   }
-}
 
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <Box sx={{ bgcolor: 'background.default', minHeight: '100vh', pb: 8 }}>
+      <Box sx={{ 
+        bgcolor: 'background.default', 
+        minHeight: '100vh', 
+        pb: 8,
+        overflowX: 'hidden',
+        width: '100%',
+      }}>
         
-        {/* Hero Header with Gradient */}
+        {/* Hero Header - Responsive */}
         <Box sx={{ 
           background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
           color: 'white',
-          py: 8,
-          mb: 6,
+          py: { xs: 4, md: 8 },
+          mb: { xs: 3, md: 6 },
           position: 'relative',
           overflow: 'hidden',
-          '&::before': {
-            content: '""',
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'url("data:image/svg+xml,%3Csvg width="60" height="60" viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg"%3E%3Cg fill="none" fill-rule="evenodd"%3E%3Cg fill="%23ffffff" fill-opacity="0.05"%3E%3Cpath d="M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z"/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")',
-          },
         }}>
           <Container maxWidth="lg" sx={{ position: 'relative', zIndex: 1 }}>
-            <Stack direction="row" spacing={3} alignItems="center" mb={2}>
+            <Stack 
+              direction={{ xs: 'column', md: 'row' }}
+              spacing={{ xs: 2, md: 3 }}
+              alignItems="center" 
+              mb={2}
+            >
               <Box sx={{ 
                 bgcolor: 'rgba(255,255,255,0.2)', 
                 borderRadius: '20px',
-                p: 2,
+                p: { xs: 1.5, md: 2 },
                 backdropFilter: 'blur(10px)',
               }}>
-                <AutoAwesome sx={{ fontSize: 48 }} />
+                <AutoAwesome sx={{ fontSize: { xs: 36, md: 48 } }} />
               </Box>
-              <Box>
-                <Typography variant="h3" component="h1" gutterBottom sx={{ mb: 1 }}>
+              <Box sx={{ textAlign: { xs: 'center', md: 'left' } }}>
+                <Typography 
+                  variant={{ xs: 'h4', md: 'h3' }}
+                  component="h1" 
+                  gutterBottom 
+                  sx={{ mb: 1 }}
+                >
                   AI Resume Optimizer
                 </Typography>
-                <Typography variant="h6" sx={{ opacity: 0.95, fontWeight: 400 }}>
-                  Transform your resume with AI-powered insights • Get hired faster
+                <Typography 
+                  variant={{ xs: 'body1', md: 'h6' }}
+                  sx={{ opacity: 0.95, fontWeight: 400 }}
+                >
+                  {isMobile 
+                    ? 'AI-powered resume insights' 
+                    : 'Transform your resume with AI-powered insights • Get hired faster'
+                  }
                 </Typography>
               </Box>
             </Stack>
           </Container>
         </Box>
 
-        <Container maxWidth="lg">
+        <Container maxWidth="lg" sx={{ px: { xs: 2, md: 3 } }}>
           
           {/* Main Upload Card */}
           <Paper 
             elevation={0}
             sx={{ 
-              p: 5, 
+              p: { xs: 3, md: 5 },
               mb: 4,
               border: '1px solid',
               borderColor: 'divider',
-              background: 'linear-gradient(to bottom, #ffffff 0%, #fafafa 100%)',
             }}
           >
             <form onSubmit={handleSubmit}>
               
-              <Typography variant="h5" gutterBottom sx={{ mb: 4, display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Typography variant={isMobile ? 'h6' : 'h5'} gutterBottom sx={{ mb: 3, display: 'flex', alignItems: 'center', gap: 1 }}>
                 <Description color="primary" />
                 Job Description
               </Typography>
@@ -426,22 +433,11 @@ function App() {
               <Tabs 
                 value={tabValue} 
                 onChange={(e, newValue) => setTabValue(newValue)}
-                sx={{ 
-                  mb: 3,
-                  '& .MuiTab-root': {
-                    minWidth: 'auto',
-                    px: 3,
-                  }
-                }}
-                TabIndicatorProps={{
-                  style: {
-                    height: 4,
-                    borderRadius: '4px 4px 0 0',
-                  }
-                }}
+                variant={isSmallMobile ? 'fullWidth' : 'standard'}
+                sx={{ mb: 3 }}
               >
-                <Tab icon={<CloudUpload />} iconPosition="start" label="Upload File" />
-                <Tab icon={<Description />} iconPosition="start" label="Paste Text" />
+                <Tab icon={<CloudUpload />} iconPosition="start" label={isSmallMobile ? 'Upload' : 'Upload File'} />
+                <Tab icon={<Description />} iconPosition="start" label={isSmallMobile ? 'Paste' : 'Paste Text'} />
                 <Tab icon={<LinkIcon />} iconPosition="start" label="URL" />
               </Tabs>
 
@@ -449,7 +445,7 @@ function App() {
                 <Paper 
                   variant="outlined" 
                   sx={{ 
-                    p: 6, 
+                    p: { xs: 3, md: 6 },
                     textAlign: 'center',
                     bgcolor: alpha(theme.palette.primary.main, 0.03),
                     border: '2px dashed',
@@ -459,24 +455,23 @@ function App() {
                     '&:hover': {
                       bgcolor: alpha(theme.palette.primary.main, 0.08),
                       borderColor: 'primary.main',
-                      transform: 'translateY(-2px)',
                     }
                   }}
                 >
                   <input
-                    accept=".pdf,.txt,.docx,.doc,.rtf,.odt,.html,.htm,.md"
+                    accept=".pdf,.txt,.docx"
                     style={{ display: 'none' }}
                     id="jd-file-upload"
                     type="file"
                     onChange={(e) => setJdFile(e.target.files[0])}
                   />
                   <label htmlFor="jd-file-upload" style={{ cursor: 'pointer', width: '100%', display: 'block' }}>
-                    <CloudUpload sx={{ fontSize: 72, color: 'primary.main', mb: 2, opacity: 0.7 }} />
-                    <Typography variant="h6" gutterBottom color="text.primary">
+                    <CloudUpload sx={{ fontSize: { xs: 48, md: 72 }, color: 'primary.main', mb: 2, opacity: 0.7 }} />
+                    <Typography variant={isMobile ? 'body1' : 'h6'} gutterBottom color="text.primary">
                       {jdFile ? `✓ ${jdFile.name}` : 'Drop your job description here'}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
-                      PDF, DOCX, TXT, or other formats supported
+                      PDF, DOCX, or TXT
                     </Typography>
                   </label>
                 </Paper>
@@ -486,16 +481,11 @@ function App() {
                 <TextField
                   fullWidth
                   multiline
-                  rows={10}
+                  rows={isMobile ? 8 : 10}
                   value={jdText}
                   onChange={(e) => setJdText(e.target.value)}
-                  placeholder="Paste the complete job description here...&#10;&#10;Include:&#10;• Job title and company&#10;• Required skills and qualifications&#10;• Responsibilities&#10;• Experience requirements"
+                  placeholder="Paste the job description here..."
                   variant="outlined"
-                  sx={{
-                    '& .MuiOutlinedInput-root': {
-                      bgcolor: 'background.paper',
-                    }
-                  }}
                 />
               </TabPanel>
 
@@ -507,17 +497,17 @@ function App() {
                   placeholder="https://example.com/job-posting"
                   variant="outlined"
                   type="url"
-                  sx={{
-                    '& .MuiOutlinedInput-root': {
-                      bgcolor: 'background.paper',
-                    }
-                  }}
                 />
+                {isMobile && (
+                  <Alert severity="info" sx={{ mt: 2 }}>
+                    📱 URL fetching works best on mobile!
+                  </Alert>
+                )}
               </TabPanel>
 
-              <Divider sx={{ my: 5 }} />
+              <Divider sx={{ my: { xs: 3, md: 5 } }} />
 
-              <Typography variant="h5" gutterBottom sx={{ mb: 4, display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Typography variant={isMobile ? 'h6' : 'h5'} gutterBottom sx={{ mb: 3, display: 'flex', alignItems: 'center', gap: 1 }}>
                 <Description color="secondary" />
                 Your Resume
               </Typography>
@@ -525,7 +515,7 @@ function App() {
               <Paper 
                 variant="outlined" 
                 sx={{ 
-                  p: 6, 
+                  p: { xs: 3, md: 6 },
                   textAlign: 'center',
                   bgcolor: alpha(theme.palette.secondary.main, 0.03),
                   border: '2px dashed',
@@ -535,24 +525,23 @@ function App() {
                   '&:hover': {
                     bgcolor: alpha(theme.palette.secondary.main, 0.08),
                     borderColor: 'secondary.main',
-                    transform: 'translateY(-2px)',
                   }
                 }}
               >
                 <input
-                  accept=".pdf,.txt,.docx,.doc,.rtf,.odt"
+                  accept=".pdf,.txt,.docx"
                   style={{ display: 'none' }}
                   id="resume-file-upload"
                   type="file"
                   onChange={(e) => setResumeFile(e.target.files[0])}
                 />
                 <label htmlFor="resume-file-upload" style={{ cursor: 'pointer', width: '100%', display: 'block' }}>
-                  <Description sx={{ fontSize: 72, color: 'secondary.main', mb: 2, opacity: 0.7 }} />
-                  <Typography variant="h6" gutterBottom color="text.primary">
+                  <Description sx={{ fontSize: { xs: 48, md: 72 }, color: 'secondary.main', mb: 2, opacity: 0.7 }} />
+                  <Typography variant={isMobile ? 'body1' : 'h6'} gutterBottom color="text.primary">
                     {resumeFile ? `✓ ${resumeFile.name}` : 'Drop your resume here'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    PDF, DOCX, or TXT format
+                    PDF, DOCX, or TXT
                   </Typography>
                 </label>
               </Paper>
@@ -565,34 +554,31 @@ function App() {
                 disabled={loading || !isFormValid()}
                 startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <AutoAwesome />}
                 sx={{ 
-                  mt: 5,
-                  py: 2.5,
-                  fontSize: '1.1rem',
+                  mt: { xs: 3, md: 5 },
+                  py: 2,
+                  fontSize: { xs: '1rem', md: '1.1rem' },
                   background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                   '&:hover': {
                     background: 'linear-gradient(135deg, #5568d3 0%, #63398d 100%)',
                   },
-                  '&:disabled': {
-                    background: 'linear-gradient(135deg, #cbd5e1 0%, #94a3b8 100%)',
-                  }
                 }}
               >
-                {loading ? 'Analyzing with AI...' : '✨ Analyze & Optimize Resume'}
+                {loading ? 'Analyzing...' : '✨ Analyze Resume'}
               </Button>
             </form>
           </Paper>
 
           {/* Loading State */}
           {analyzing && (
-            <Paper sx={{ p: 4, mb: 4, textAlign: 'center' }}>
-              <CircularProgress size={60} sx={{ mb: 3 }} />
+            <Paper sx={{ p: { xs: 3, md: 4 }, mb: 4, textAlign: 'center' }}>
+              <CircularProgress size={60} sx={{ mb: 2 }} />
               <Typography variant="h6" gutterBottom>
-                AI is analyzing your resume...
+                AI is analyzing...
               </Typography>
               <Typography variant="body2" color="text.secondary">
                 This may take 10-20 seconds
               </Typography>
-              <LinearProgress sx={{ mt: 3, borderRadius: 2 }} />
+              <LinearProgress sx={{ mt: 2, borderRadius: 2 }} />
             </Paper>
           )}
 
@@ -604,37 +590,38 @@ function App() {
               sx={{ mb: 4, borderRadius: 3 }}
               onClose={() => setError('')}
             >
-              <strong>Error:</strong> {error}
+              {error}
             </Alert>
           )}
 
-          {/* Results */}
+          {/* Results - NEW ACCORDION DESIGN */}
           {result && result.success && (
             <Collapse in={!!result}>
-              <Stack spacing={4}>
+              <Stack spacing={3}>
                 
                 {/* Success Banner */}
                 <Paper
                   sx={{
-                    p: 4,
+                    p: { xs: 2, md: 3 },
                     background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
                     color: 'white',
+                    borderRadius: 3,
                   }}
                 >
                   <Stack direction="row" alignItems="center" spacing={2}>
-                    <CheckCircle sx={{ fontSize: 48 }} />
+                    <CheckCircle sx={{ fontSize: { xs: 32, md: 40 } }} />
                     <Box>
-                      <Typography variant="h5" fontWeight="bold" gutterBottom>
+                      <Typography variant={isMobile ? 'h6' : 'h5'} fontWeight="bold">
                         Analysis Complete! 🎉
                       </Typography>
-                      <Typography variant="body1">
-                        Your resume has been analyzed by AI. Review the insights below and download your optimized version.
+                      <Typography variant="body2">
+                        Review insights below
                       </Typography>
                     </Box>
                   </Stack>
                 </Paper>
 
-                {/* ATS Score - Featured Card */}
+                {/* ATS Score - Always Visible */}
                 <Card 
                   elevation={4}
                   sx={{
@@ -642,252 +629,167 @@ function App() {
                     color: 'white',
                   }}
                 >
-                  <CardContent sx={{ p: 4 }}>
-                    <Stack direction="row" alignItems="center" spacing={2} mb={3}>
-                      <Psychology sx={{ fontSize: 40 }} />
-                      <Typography variant="h4" fontWeight="bold">
-                        ATS Compatibility Score
+                  <CardContent sx={{ p: { xs: 2, md: 4 } }}>
+                    <Stack direction="row" alignItems="center" spacing={2} mb={2}>
+                      <Psychology sx={{ fontSize: { xs: 28, md: 32 } }} />
+                      <Typography variant={isMobile ? 'h6' : 'h5'} fontWeight="bold">
+                        ATS Score
                       </Typography>
                     </Stack>
                     <Paper 
-                        elevation={0}
-                        sx={{ 
-                          p: 4, 
-                          bgcolor: 'rgba(255,255,255,0.95)',
-                          color: 'text.primary',
-                          borderRadius: 3,
-                        }}
-      >
-  <FormattedText text={formatAIResponse(result.data.ats_score.score_analysis)} />
-</Paper>
+                      elevation={0}
+                      sx={{ 
+                        p: { xs: 2, md: 3 },
+                        bgcolor: 'rgba(255,255,255,0.95)',
+                        color: 'text.primary',
+                        borderRadius: 2,
+                      }}
+                    >
+                      <FormattedText text={formatAIResponse(result.data.ats_score.score_analysis)} />
+                    </Paper>
                   </CardContent>
                 </Card>
 
-                <Grid container spacing={3}>
+                {/* Expandable Sections */}
+                <Paper elevation={2}>
                   
-                  {/* Job Analysis */}
-                  <Grid item xs={12} md={6}>
-                    <Card elevation={2} sx={{ height: '100%' }}>
-                      <CardContent sx={{ p: 4 }}>
-                        <Stack direction="row" alignItems="center" spacing={2} mb={3}>
-                          <TipsAndUpdates color="warning" sx={{ fontSize: 32 }} />
-                          <Typography variant="h6" fontWeight="bold">
-                            Job Requirements
-                          </Typography>
-                        </Stack>
-                        <Paper 
-  elevation={0}
-  sx={{ 
-    p: 3, 
-    bgcolor: 'grey.50',
-    maxHeight: 400,
-    overflow: 'auto',
-  }}
->
-  <FormattedText text={formatAIResponse(result.data.jd_analysis.analysis)} />
-</Paper>
-                      </CardContent>
-                    </Card>
-                  </Grid>
+                  {/* Job Requirements */}
+                  <Accordion defaultExpanded={!isMobile}>
+                    <AccordionSummary 
+                      expandIcon={<ExpandMore />}
+                      sx={{ bgcolor: 'grey.50' }}
+                    >
+                      <Stack direction="row" alignItems="center" spacing={2}>
+                        <TipsAndUpdates color="warning" sx={{ fontSize: 24 }} />
+                        <Typography variant="h6" fontWeight="600" fontSize={{ xs: '1rem', md: '1.25rem' }}>
+                          Job Requirements
+                        </Typography>
+                      </Stack>
+                    </AccordionSummary>
+                    <AccordionDetails sx={{ p: { xs: 2, md: 3 } }}>
+                      <FormattedText text={formatAIResponse(result.data.jd_analysis.analysis)} />
+                    </AccordionDetails>
+                  </Accordion>
 
-                  {/* Resume Suggestions */}
-                  <Grid item xs={12} md={6}>
-                    <Card elevation={2} sx={{ height: '100%' }}>
-                      <CardContent sx={{ p: 4 }}>
-                        <Stack direction="row" alignItems="center" spacing={2} mb={3}>
-                          <AutoAwesome color="secondary" sx={{ fontSize: 32 }} />
-                          <Typography variant="h6" fontWeight="bold">
-                            Optimization Tips
-                          </Typography>
-                        </Stack>
-                        <Paper 
-  elevation={0}
-  sx={{ 
-    p: 3, 
-    bgcolor: 'grey.50',
-    maxHeight: 400,
-    overflow: 'auto',
-  }}
->
-  <FormattedText text={formatAIResponse(result.data.resume_suggestions.suggestions)} />
-</Paper>
-                      </CardContent>
-                    </Card>
-                  </Grid>
-                </Grid>
+                  <Divider />
 
-                {/* Interview Prep */}
-                <Card elevation={2}>
-                  <CardContent sx={{ p: 4 }}>
-                    <Stack direction="row" alignItems="center" spacing={2} mb={3}>
-                      <School color="success" sx={{ fontSize: 32 }} />
-                      <Typography variant="h5" fontWeight="bold">
-                        Interview Preparation Guide
-                      </Typography>
-                    </Stack>
-                    <Paper 
-  elevation={0}
-  sx={{ 
-    p: 4, 
-    bgcolor: 'grey.50',
-  }}
->
-  <FormattedText text={formatAIResponse(result.data.interview_prep.interview_prep)} />
-</Paper>
-                  </CardContent>
-                </Card>
+                  {/* Resume Tips */}
+                  <Accordion>
+                    <AccordionSummary expandIcon={<ExpandMore />}>
+                      <Stack direction="row" alignItems="center" spacing={2}>
+                        <AutoAwesome color="secondary" sx={{ fontSize: 24 }} />
+                        <Typography variant="h6" fontWeight="600" fontSize={{ xs: '1rem', md: '1.25rem' }}>
+                          Optimization Tips
+                        </Typography>
+                      </Stack>
+                    </AccordionSummary>
+                    <AccordionDetails sx={{ p: { xs: 2, md: 3 } }}>
+                      <FormattedText text={formatAIResponse(result.data.resume_suggestions.suggestions)} />
+                    </AccordionDetails>
+                  </Accordion>
 
-                {/* YouTube Resources */}
-<Card elevation={2}>
-  <CardContent sx={{ p: 4 }}>
-    <Stack direction="row" alignItems="center" spacing={2} mb={3}>
-      <PlayCircleOutline color="error" sx={{ fontSize: 32 }} />
-      <Typography variant="h5" fontWeight="bold">
-        Learning Resources
-      </Typography>
-    </Stack>
-    <Typography variant="body2" color="text.secondary" mb={3}>
-      Master these topics to ace your interview:
-    </Typography>
-    <Grid container spacing={3}>
-      {result.data.youtube_resources.map((resource, index) => (
-        <Grid item xs={12} sm={6} md={4} key={index}>
-          <Card
-            component="a"
-            href={resource.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            sx={{
-              textDecoration: 'none',
-              display: 'block',
-              transition: 'all 0.3s',
-              cursor: 'pointer',
-              '&:hover': {
-                transform: 'translateY(-8px)',
-                boxShadow: 6,
-              }
-            }}
-          >
-            {/* Thumbnail Area */}
-            <Box
-              sx={{
-                height: 160,
-                background: 'linear-gradient(135deg, #ff0000 0%, #cc0000 100%)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                position: 'relative',
-                '&:hover .play-icon': {
-                  transform: 'scale(1.2)',
-                }
-              }}
-            >
-              <PlayCircleOutline
-                className="play-icon"
-                sx={{
-                  fontSize: 64,
-                  color: 'white',
-                  transition: 'transform 0.3s',
-                  filter: 'drop-shadow(0 4px 8px rgba(0,0,0,0.3))',
-                }}
-              />
-            </Box>
-            
-            {/* Content Area */}
-            <CardContent sx={{ p: 2.5 }}>
-              <Typography 
-                variant="body1" 
-                fontWeight="600"
-                color="text.primary"
-                sx={{
-                  mb: 1,
-                  display: '-webkit-box',
-                  WebkitLineClamp: 2,
-                  WebkitBoxOrient: 'vertical',
-                  overflow: 'hidden',
-                  minHeight: '3em',
-                }}
-              >
-                {resource.topic}
-              </Typography>
-              <Chip
-                label="Search on YouTube"
-                size="small"
-                icon={<PlayCircleOutline />}
-                sx={{
-                  bgcolor: '#ff0000',
-                  color: 'white',
-                  fontWeight: 600,
-                  fontSize: '0.75rem',
-                  '&:hover': {
-                    bgcolor: '#cc0000',
-                  }
-                }}
-              />
-            </CardContent>
-          </Card>
-        </Grid>
-      ))}
-    </Grid>
-  </CardContent>
-</Card>
+                  <Divider />
 
-                {/* Download Button - Prominent */}
+                  {/* Interview Prep */}
+                  <Accordion>
+                    <AccordionSummary expandIcon={<ExpandMore />}>
+                      <Stack direction="row" alignItems="center" spacing={2}>
+                        <School color="success" sx={{ fontSize: 24 }} />
+                        <Typography variant="h6" fontWeight="600" fontSize={{ xs: '1rem', md: '1.25rem' }}>
+                          Interview Prep
+                        </Typography>
+                      </Stack>
+                    </AccordionSummary>
+                    <AccordionDetails sx={{ p: { xs: 2, md: 3 } }}>
+                      <FormattedText text={formatAIResponse(result.data.interview_prep.interview_prep)} />
+                    </AccordionDetails>
+                  </Accordion>
+
+                  <Divider />
+
+                  {/* YouTube Resources */}
+                  <Accordion>
+                    <AccordionSummary expandIcon={<ExpandMore />}>
+                      <Stack direction="row" alignItems="center" spacing={2} width="100%">
+                        <PlayCircleOutline color="error" sx={{ fontSize: 24 }} />
+                        <Typography variant="h6" fontWeight="600" fontSize={{ xs: '1rem', md: '1.25rem' }}>
+                          Learning Resources
+                        </Typography>
+                        <Chip 
+                          label={result.data.youtube_resources.length}
+                          size="small"
+                          sx={{ ml: 'auto' }}
+                        />
+                      </Stack>
+                    </AccordionSummary>
+                    <AccordionDetails sx={{ p: { xs: 2, md: 3 } }}>
+                      <Grid container spacing={2}>
+                        {result.data.youtube_resources.map((resource, index) => (
+                          <Grid item xs={12} sm={6} md={4} key={index}>
+                            <Card
+                              component="a"
+                              href={resource.url}
+                              target="_blank"
+                              sx={{
+                                textDecoration: 'none',
+                                transition: 'all 0.2s',
+                                '&:hover': {
+                                  transform: 'translateY(-4px)',
+                                  boxShadow: 4,
+                                }
+                              }}
+                            >
+                              <Box sx={{
+                                height: 100,
+                                background: 'linear-gradient(135deg, #ff0000 0%, #cc0000 100%)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}>
+                                <PlayCircleOutline sx={{ fontSize: 40, color: 'white' }} />
+                              </Box>
+                              <CardContent sx={{ p: 1.5 }}>
+                                <Typography variant="body2" fontWeight="600" noWrap>
+                                  {resource.topic}
+                                </Typography>
+                              </CardContent>
+                            </Card>
+                          </Grid>
+                        ))}
+                      </Grid>
+                    </AccordionDetails>
+                  </Accordion>
+                </Paper>
+
+                {/* Download Button */}
                 <Paper 
                   sx={{ 
-                    p: 4, 
+                    p: { xs: 2, md: 3 },
                     textAlign: 'center',
                     background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
                     color: 'white',
                   }}
                 >
-                  <Typography variant="h5" fontWeight="bold" gutterBottom>
+                  <Typography variant="h6" fontWeight="bold" gutterBottom>
                     Ready to apply?
                   </Typography>
-                  <Typography variant="body1" sx={{ mb: 3, opacity: 0.95 }}>
-                    Download your AI-optimized resume and start applying!
+                  <Typography variant="body2" sx={{ mb: 2, opacity: 0.95 }}>
+                    Download your optimized resume
                   </Typography>
-
-                  {/* DEBUG BUTTON - Add this temporarily */}
-  <Button
-    variant="outlined"
-    size="small"
-    onClick={() => {
-      console.log('=== RESUME DATA ===')
-      console.log(JSON.stringify(result.data.resume_data, null, 2))
-      console.log('===================')
-      alert('Check browser console (F12) for resume data')
-    }}
-    sx={{
-      mb: 2,
-      bgcolor: 'rgba(255,255,255,0.2)',
-      color: 'white',
-      borderColor: 'white',
-      '&:hover': {
-        bgcolor: 'rgba(255,255,255,0.3)',
-      }
-    }}
-  >
-    🔍 Debug: Show Resume Data
-  </Button>
-
                   <Button
                     variant="contained"
-                    size="large"
+                    size={isMobile ? 'medium' : 'large'}
                     startIcon={<Download />}
                     onClick={handleDownloadResume}
                     sx={{
                       bgcolor: 'white',
                       color: 'primary.main',
-                      py: 2,
-                      px: 5,
-                      fontSize: '1.1rem',
-                      '&:hover': {
-                        bgcolor: 'grey.100',
-                      }
+                      py: { xs: 1, md: 1.5 },
+                      px: { xs: 3, md: 4 },
+                      '&:hover': { bgcolor: 'grey.100' }
                     }}
                   >
-                    Download Optimized Resume
+                    Download Resume
                   </Button>
                 </Paper>
 

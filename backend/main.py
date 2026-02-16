@@ -47,53 +47,246 @@ def read_root():
 def health_check():
     return {"status": "healthy"}
 
-# Helper function to extract text from PDF
-def extract_text_from_pdf(file_content: bytes) -> str:
-    """Extract text from PDF file bytes"""
+# ==================== ROBUST DOCUMENT EXTRACTION ====================
+
+def extract_text_from_pdf_robust(file_content: bytes) -> str:
+    """
+    Robust PDF extraction using multiple methods
+    Tries pdfplumber first, falls back to PyPDF2
+    """
+    # Method 1: Try pdfplumber (better for complex PDFs)
+    try:
+        import pdfplumber
+        
+        pdf_file = io.BytesIO(file_content)
+        text_parts = []
+        
+        with pdfplumber.open(pdf_file) as pdf:
+            for page_num, page in enumerate(pdf.pages):
+                # Extract text
+                page_text = page.extract_text()
+                if page_text:
+                    text_parts.append(page_text)
+                
+                # Extract tables
+                tables = page.extract_tables()
+                for table in tables:
+                    for row in table:
+                        if row:
+                            row_text = [str(cell).strip() for cell in row if cell]
+                            if row_text:
+                                text_parts.append(' | '.join(row_text))
+        
+        result = '\n'.join(text_parts).strip()
+        if len(result) > 100:  # Got good content
+            print(f"✅ PDF extracted using pdfplumber: {len(result)} characters")
+            return result
+        else:
+            print("⚠️ pdfplumber extracted little content, trying PyPDF2...")
+            raise Exception("Insufficient content")
+            
+    except Exception as e:
+        print(f"pdfplumber failed: {e}, falling back to PyPDF2...")
+    
+    # Method 2: Fallback to PyPDF2
     try:
         pdf_file = io.BytesIO(file_content)
         pdf_reader = PyPDF2.PdfReader(pdf_file)
         
-        text = ""
+        text = []
         for page in pdf_reader.pages:
-            text += page.extract_text()
+            page_text = page.extract_text()
+            if page_text:
+                text.append(page_text)
         
-        return text.strip()
+        result = '\n'.join(text).strip()
+        print(f"✅ PDF extracted using PyPDF2: {len(result)} characters")
+        return result
+        
     except Exception as e:
         return f"Error extracting PDF: {str(e)}"
 
-# Helper function to extract text from DOCX
-def extract_text_from_docx(file_content: bytes) -> str:
-    """Extract text from DOCX file bytes"""
+def extract_text_from_docx_robust(file_content: bytes) -> str:
+    """
+    Robust DOCX extraction including:
+    - Headers and footers
+    - Paragraphs
+    - Tables
+    - Text boxes (where possible)
+    """
     try:
         docx_file = io.BytesIO(file_content)
         doc = Document(docx_file)
         
-        text = []
-        for paragraph in doc.paragraphs:
-            text.append(paragraph.text)
+        full_text = []
         
-        return '\n'.join(text).strip()
+        # 1. Extract from all sections (headers)
+        for section in doc.sections:
+            # Header
+            header = section.header
+            for para in header.paragraphs:
+                if para.text.strip():
+                    full_text.append(para.text.strip())
+        
+        # 2. Extract main body content in order
+        for element in doc.element.body:
+            # Paragraphs
+            if element.tag.endswith('p'):
+                for para in doc.paragraphs:
+                    if para._element == element:
+                        if para.text.strip():
+                            full_text.append(para.text.strip())
+                        break
+            
+            # Tables
+            elif element.tag.endswith('tbl'):
+                for table in doc.tables:
+                    if table._element == element:
+                        for row in table.rows:
+                            row_text = []
+                            for cell in row.cells:
+                                cell_text = cell.text.strip()
+                                if cell_text:
+                                    row_text.append(cell_text)
+                            if row_text:
+                                full_text.append(' | '.join(row_text))
+                        full_text.append('')  # Blank line after table
+                        break
+        
+        # 3. Extract from footers
+        for section in doc.sections:
+            footer = section.footer
+            for para in footer.paragraphs:
+                if para.text.strip():
+                    full_text.append(para.text.strip())
+        
+        result = '\n'.join(full_text).strip()
+        print(f"✅ DOCX extracted: {len(result)} characters")
+        return result
+        
     except Exception as e:
-        return f"Error extracting DOCX: {str(e)}"
+        # Fallback to simple extraction
+        print(f"⚠️ Advanced DOCX extraction failed: {e}, using simple method...")
+        try:
+            docx_file = io.BytesIO(file_content)
+            doc = Document(docx_file)
+            
+            text = []
+            
+            # Get paragraphs
+            for paragraph in doc.paragraphs:
+                if paragraph.text.strip():
+                    text.append(paragraph.text.strip())
+            
+            # Get tables
+            for table in doc.tables:
+                for row in table.rows:
+                    row_data = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                    if row_data:
+                        text.append(' | '.join(row_data))
+            
+            result = '\n'.join(text).strip()
+            print(f"✅ DOCX extracted (simple): {len(result)} characters")
+            return result
+        except Exception as e2:
+            return f"Error extracting DOCX: {str(e2)}"
 
-# Helper function to determine file type and extract text
+def extract_text_from_txt(file_content: bytes) -> str:
+    """Extract text from plain text file with encoding detection"""
+    encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
+    
+    for encoding in encodings:
+        try:
+            text = file_content.decode(encoding)
+            print(f"✅ TXT decoded with {encoding}: {len(text)} characters")
+            return text
+        except UnicodeDecodeError:
+            continue
+    
+    # If all fail, use utf-8 with error handling
+    return file_content.decode('utf-8', errors='ignore')
+
+def validate_extracted_text(text: str, filename: str) -> dict:
+    """
+    Validate that extraction was successful and warn about issues
+    """
+    validation = {
+        "success": True,
+        "warnings": [],
+        "text": text,
+        "char_count": len(text)
+    }
+    
+    # Check 1: Minimum length
+    if len(text) < 100:
+        validation["success"] = False
+        validation["warnings"].append("Very little text extracted. File might be corrupted, password-protected, or an image.")
+    
+    # Check 2: Has email?
+    if '@' not in text:
+        validation["warnings"].append("No email address found. Might be in an image or special formatting.")
+    
+    # Check 3: Has phone?
+    import re
+    phone_pattern = r'\+?\d[\d\s\-\(\)]{7,}'
+    if not re.search(phone_pattern, text):
+        validation["warnings"].append("No phone number detected.")
+    
+    # Check 4: Has meaningful content?
+    words = text.split()
+    if len(words) < 50:
+        validation["success"] = False
+        validation["warnings"].append("Too few words extracted. Extraction may have failed.")
+    
+    # Check 5: Looks like gibberish?
+    avg_word_length = sum(len(word) for word in words[:100]) / min(len(words), 100) if words else 0
+    if avg_word_length > 15:  # Average word too long = probably encoding issue
+        validation["warnings"].append("Text may have encoding issues.")
+    
+    return validation
+
 def extract_text_from_file(filename: str, file_content: bytes) -> str:
-    """Extract text based on file extension"""
+    """
+    ROBUST file extraction with validation and fallbacks
+    """
     filename_lower = filename.lower()
     
-    if filename_lower.endswith('.pdf'):
-        return extract_text_from_pdf(file_content)
-    elif filename_lower.endswith('.docx'):
-        return extract_text_from_docx(file_content)
-    elif filename_lower.endswith('.txt'):
-        try:
-            return file_content.decode('utf-8')
-        except UnicodeDecodeError:
-            # Try with latin-1 encoding if utf-8 fails
-            return file_content.decode('latin-1')
-    else:
-        return "Unsupported file format"
+    print(f"📄 Extracting text from: {filename}")
+    
+    try:
+        # Route to appropriate extractor
+        if filename_lower.endswith('.pdf'):
+            text = extract_text_from_pdf_robust(file_content)
+        
+        elif filename_lower.endswith('.docx'):
+            text = extract_text_from_docx_robust(file_content)
+        
+        elif filename_lower.endswith('.txt'):
+            text = extract_text_from_txt(file_content)
+        
+        else:
+            return f"❌ Unsupported file format: {filename}. Please use PDF, DOCX, or TXT."
+        
+        # Validate extraction
+        validation = validate_extracted_text(text, filename)
+        
+        # Log warnings
+        if validation["warnings"]:
+            print(f"⚠️ Extraction warnings for {filename}:")
+            for warning in validation["warnings"]:
+                print(f"   - {warning}")
+        
+        # If extraction completely failed
+        if not validation["success"]:
+            error_msg = f"Failed to extract sufficient content from {filename}. "
+            error_msg += "Possible issues: " + "; ".join(validation["warnings"])
+            return error_msg
+        
+        return text
+        
+    except Exception as e:
+        print(f"❌ Error extracting {filename}: {str(e)}")
+        return f"Error extracting file: {str(e)}"
 
 # ==================== AI ANALYSIS FUNCTIONS ====================
 
@@ -848,12 +1041,103 @@ def generate_optimized_resume(
     return improved_tex
 
 
-# ==================== URL FETCHING FUNCTIONS ====================
+# ==================== URL FETCHING WITH SELENIUM ====================
+
+def fetch_job_with_selenium(url: str) -> str:
+    """
+    Fetch job description using Selenium (handles JavaScript-rendered content)
+    Works for sites like Mastercard, Workday, Greenhouse, etc.
+    """
+    try:
+        from selenium import webdriver
+        from selenium.webdriver.chrome.service import Service
+        from selenium.webdriver.chrome.options import Options
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        from webdriver_manager.chrome import ChromeDriverManager
+        import time
+        
+        print("🤖 Launching headless browser with Selenium...")
+        
+        # Setup Chrome options
+        chrome_options = Options()
+        chrome_options.add_argument('--headless')  # Run in background
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument('--disable-gpu')
+        chrome_options.add_argument('--window-size=1920,1080')
+        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+        chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+        
+        # Initialize driver
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        driver.set_page_load_timeout(30)
+        
+        try:
+            # Load the page
+            print(f"🌐 Loading: {url}")
+            driver.get(url)
+            
+            # Wait for page to load (try multiple strategies)
+            try:
+                # Strategy 1: Wait for main content
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "main"))
+                )
+            except:
+                try:
+                    # Strategy 2: Wait for body
+                    WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.TAG_NAME, "body"))
+                    )
+                except:
+                    pass  # Continue anyway
+            
+            # Give extra time for JavaScript to render
+            print("⏳ Waiting for JavaScript to render...")
+            time.sleep(5)  # Adjust if needed
+            
+            # Scroll to load lazy content
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(2)
+            
+            # Get all text from body
+            text = driver.find_element(By.TAG_NAME, "body").text
+            
+            print(f"✅ Selenium extracted {len(text)} characters")
+            
+            return text
+            
+        finally:
+            driver.quit()
+        
+    except Exception as e:
+        raise Exception(f"Selenium error: {str(e)}")
 
 def fetch_job_description_from_url(url: str) -> str:
     """
     Fetch and extract job description from URL
+    Tries Selenium first (for JS sites), falls back to simple scraping
     """
+    
+    # Try Method 1: Selenium (for JavaScript-heavy sites)
+    try:
+        print("🤖 Attempting Selenium extraction (handles JavaScript)...")
+        text = fetch_job_with_selenium(url)
+        
+        if len(text) > 500:
+            print(f"✅ Selenium successful: {len(text)} characters")
+            return text
+        else:
+            print("⚠️ Selenium got little content, trying simple scraping...")
+            
+    except Exception as selenium_error:
+        print(f"⚠️ Selenium failed: {selenium_error}")
+        print("📄 Falling back to simple HTTP scraping...")
+    
+    # Try Method 2: Simple HTTP scraping (fallback)
     try:
         # Set headers to mimic a real browser
         headers = {
@@ -876,9 +1160,6 @@ def fetch_job_description_from_url(url: str) -> str:
             script.decompose()
         
         # Try to find job description in common containers
-        # Different job sites use different structures
-        
-        # Strategy 1: Look for common job description containers
         jd_selectors = [
             {'class': 'job-description'},
             {'class': 'jobdescription'},
@@ -897,38 +1178,34 @@ def fetch_job_description_from_url(url: str) -> str:
             container = soup.find('div', selector) or soup.find('section', selector)
             if container:
                 text = container.get_text(separator='\n', strip=True)
-                if len(text) > 200:  # Make sure we got substantial content
+                if len(text) > 200:
                     break
         
-        # Strategy 2: If no specific container found, get main content
+        # If no specific container found, get all text
         if not text or len(text) < 200:
-            # Remove common non-content elements
             for tag in soup.find_all(['nav', 'header', 'footer', 'aside']):
                 tag.decompose()
-            
-            # Get body text
             text = soup.get_text(separator='\n', strip=True)
         
         # Clean up the text
         lines = [line.strip() for line in text.split('\n') if line.strip()]
         text = '\n'.join(lines)
-        
-        # Remove excessive whitespace
         text = re.sub(r'\n{3,}', '\n\n', text)
         
-        # Basic validation
         if len(text) < 100:
-            raise Exception("Could not extract sufficient content from URL. The page might require authentication or use dynamic loading.")
+            raise Exception("Could not extract sufficient content from URL")
         
+        print(f"✅ Simple scraping successful: {len(text)} characters")
         return text
         
     except requests.exceptions.Timeout:
-        raise Exception("Request timed out. The website took too long to respond.")
+        raise Exception("Request timed out")
     except requests.exceptions.RequestException as e:
         raise Exception(f"Failed to fetch URL: {str(e)}")
     except Exception as e:
         raise Exception(f"Error extracting content: {str(e)}")
 
+        
 def smart_extract_job_description(text: str, max_length: int = 10000) -> str:
     """
     Clean and extract just the relevant job description parts
