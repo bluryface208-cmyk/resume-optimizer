@@ -1209,8 +1209,7 @@ def fetch_job_description_from_url(url: str) -> str:
     except Exception as e:
         raise Exception(f"Error extracting content: {str(e)}")
 
-        
-        def smart_extract_job_description(text: str, max_length: int = 10000) -> str:
+def smart_extract_job_description(text: str, max_length: int = 10000) -> str:
     """
     Clean and extract just the relevant job description parts
     """
@@ -1406,16 +1405,6 @@ async def download_optimized_resume(
             )
         
     except Exception as e:
-        pt Exception as e:
-        print(f"Error: {str(e)}")
-        return {
-            "success": False,
-            "error": str(e)
-        }rint(f"Error: {str(e)}")
-        return {
-            "success": False,
-            "error": str(e)
-        }t Exception as e:
         print(f"Error: {str(e)}")
         return {
             "success": False,
