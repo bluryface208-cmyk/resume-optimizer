@@ -33,7 +33,11 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "https://resume-optimizer.vercel.app"],  # Allows all origins. For better security in production, replace "*" with your actual Vercel URL.
+    allow_origins=[
+        "http://localhost:5173",
+        "https://resume-optimizer.vercel.app",
+        "https://resume-optimizer-azure.vercel.app"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1206,7 +1210,7 @@ def fetch_job_description_from_url(url: str) -> str:
         raise Exception(f"Error extracting content: {str(e)}")
 
         
-def smart_extract_job_description(text: str, max_length: int = 10000) -> str:
+        def smart_extract_job_description(text: str, max_length: int = 10000) -> str:
     """
     Clean and extract just the relevant job description parts
     """
@@ -1402,6 +1406,16 @@ async def download_optimized_resume(
             )
         
     except Exception as e:
+        pt Exception as e:
+        print(f"Error: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e)
+        }rint(f"Error: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e)
+        }t Exception as e:
         print(f"Error: {str(e)}")
         return {
             "success": False,
