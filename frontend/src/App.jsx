@@ -314,63 +314,46 @@ function App() {
     return
   }
   
+  if (!result.data.resume_data) {
+    alert('No resume data available. Please re-analyze your resume.')
+    return
+  }
+  
   try {
     setLoading(true)
     
-    // Ask user to upload their original .tex file
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = '.tex'
+    const formData = new FormData()
+    formData.append('resume_data', JSON.stringify(result.data.resume_data))
     
-    input.onchange = async (e) => {
-      const texFile = e.target.files[0]
-      
-      if (!texFile) {
-        alert('Please select a .tex file')
-        return
+    const response = await axios.post(
+      `${API_URL}/download-resume`,
+      formData,
+      {
+        responseType: 'blob',
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
       }
-      
-      const formData = new FormData()
-      formData.append('original_resume', texFile)
-      formData.append('ai_suggestions', result.data.resume_suggestions.suggestions)
-      formData.append('jd_analysis', result.data.jd_analysis.analysis)
-      formData.append('ats_score', result.data.ats_score.score_analysis)
-      
-      try {
-        const response = await axios.post(
-          `${API_URL}/download-resume`,
-          formData,
-          {
-            responseType: 'blob',
-            headers: {
-              'Content-Type': 'multipart/form-data'
-            }
-          }
-        )
-        
-        // Create download link
-        const url = window.URL.createObjectURL(new Blob([response.data]))
-        const link = document.createElement('a')
-        link.href = url
-        link.setAttribute('download', `optimized_${texFile.name}`)
-        document.body.appendChild(link)
-        link.click()
-        link.remove()
-        
-        alert('✅ Resume downloaded successfully!')
-      } catch (error) {
-        console.error('Download error:', error)
-        alert('Error downloading resume. Please try again.')
-      } finally {
-        setLoading(false)
-      }
-    }
+    )
     
-    input.click()
+    // Determine file extension from response
+    const contentType = response.headers['content-type']
+    const extension = contentType.includes('pdf') ? 'pdf' : 'tex'
     
+    // Create download link
+    const url = window.URL.createObjectURL(new Blob([response.data]))
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', `optimized_resume.${extension}`)
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    
+    alert(`✅ Resume downloaded as ${extension.toUpperCase()}!`)
   } catch (error) {
-    console.error('Error:', error)
-    alert('Error preparing download')
+    console.error('Download error:', error)
+    alert('Error downloading resume. Please try again.')
+  } finally {
     setLoading(false)
   }
 }
@@ -864,6 +847,30 @@ function App() {
                   <Typography variant="body1" sx={{ mb: 3, opacity: 0.95 }}>
                     Download your AI-optimized resume and start applying!
                   </Typography>
+
+                  {/* DEBUG BUTTON - Add this temporarily */}
+  <Button
+    variant="outlined"
+    size="small"
+    onClick={() => {
+      console.log('=== RESUME DATA ===')
+      console.log(JSON.stringify(result.data.resume_data, null, 2))
+      console.log('===================')
+      alert('Check browser console (F12) for resume data')
+    }}
+    sx={{
+      mb: 2,
+      bgcolor: 'rgba(255,255,255,0.2)',
+      color: 'white',
+      borderColor: 'white',
+      '&:hover': {
+        bgcolor: 'rgba(255,255,255,0.3)',
+      }
+    }}
+  >
+    🔍 Debug: Show Resume Data
+  </Button>
+
                   <Button
                     variant="contained"
                     size="large"
