@@ -29,17 +29,14 @@ try:
 except ImportError:
     PDFPLUMBER_AVAILABLE = False
 
-# Load environment variables
 load_dotenv()
-
-# Initialize Groq client
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "https://resume-optimizer.vercel.app","https://resume-optimizer-azure.vercel.app"],
+    allow_origins=["http://localhost:5173", "https://resume-optimizer.vercel.app", "https://resume-optimizer-azure.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -60,66 +57,138 @@ def health_check():
 
 # ==================== GROQ MULTI-MODEL SUPPORT ====================
 
-# Groq models in priority order (all FREE - 6,000 requests/day each)
 GROQ_MODELS = [
-    "llama-3.3-70b-versatile",  # Best quality (primary)
-    "llama-3.1-8b-instant",  # Good quality (fallback 1)
-    "openai/gpt-oss-120b",       # Faster, good quality (fallback 2)
-    "openai/gpt-oss-20b"              # Fastest, decent quality (fallback 3)
+    "llama-3.3-70b-versatile",   # Best quality — primary (128k context)
+    "llama-3.1-8b-instant",      # Fast fallback (128k context)
+    "gemma2-9b-it",              # Google fallback (8k context)
 ]
 
-def analyze_with_groq(prompt: str, max_tokens: int = 2000) -> str:
+# ── Round-robin counter so consecutive calls use different models
+# This avoids hammering llama-3.3-70b on every single call
+_model_counter = 0
+
+def analyze_with_groq(prompt: str, max_tokens: int = 2000, prefer_large: bool = True) -> str:
     """
-    Call Groq API with automatic model fallback
-    Tries all 4 models if one fails (rate limit/credits)
+    Call Groq API with automatic model fallback.
+    prefer_large=True  → start from llama-3.3-70b (best quality, use for JSON tasks)
+    prefer_large=False → round-robin across all models (use for text tasks)
     """
-    
+    global _model_counter
+
+    if prefer_large:
+        # Always try best model first for JSON-heavy tasks
+        ordered = GROQ_MODELS[:]
+    else:
+        # Rotate starting model to spread load
+        start = _model_counter % len(GROQ_MODELS)
+        ordered = GROQ_MODELS[start:] + GROQ_MODELS[:start]
+        _model_counter += 1
+
     last_error = None
-    
-    for model in GROQ_MODELS:
+    for model in ordered:
         try:
             print(f"🤖 Trying Groq: {model}")
-            
             chat_completion = groq_client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
                 model=model,
                 temperature=0.7,
                 max_tokens=max_tokens,
             )
-            
             response = chat_completion.choices[0].message.content
             print(f"✅ Success with {model}")
             return response
-            
         except Exception as e:
             error_msg = str(e).lower()
             last_error = str(e)
-            
-            print(f"⚠️ {model} failed: {error_msg[:100]}")
-            
-            # Check if it's a rate limit or credit issue
-            if any(keyword in error_msg for keyword in ['rate', 'limit', 'quota', 'credit', 'exhausted']):
-                print(f"💡 Rate limit on {model}, trying next model...")
-                continue
-            else:
-                # Other error, try next model anyway
-                print(f"⚠️ Error on {model}, trying next model...")
-                continue
-    
-    # All models failed
+            print(f"⚠️ {model} failed: {error_msg[:120]}")
+            continue
+
     raise Exception(
-        f"All Groq models exhausted. Last error: {last_error}\n\n"
-        f"Solutions:\n"
-        f"1. Wait a few minutes and try again\n"
-        f"2. Groq free tier resets daily (6,000 requests per model)\n"
-        f"3. You have {len(GROQ_MODELS)} models = {len(GROQ_MODELS) * 6000} total free requests/day\n"
-        f"4. Create another Groq account for more free credits"
+        f"All Groq models exhausted. Last error: {last_error}\n"
+        f"Wait a few minutes — Groq free tier resets every minute per model."
     )
+
+# ==================== ROBUST JSON EXTRACTION ====================
+
+def extract_json_from_response(response: str) -> dict:
+    """
+    Robustly extract a JSON object from an LLM response.
+    Handles:
+      - Markdown code fences (```json ... ```)
+      - Extra text before/after the JSON object
+      - Truncated JSON (tries to close open braces)
+      - 'Extra data' errors from llama-3.1 outputting text after closing brace
+    """
+    if not response:
+        return None
+
+    text = response.strip()
+
+    # 1. Strip markdown code fences
+    text = re.sub(r'^```(?:json)?\s*', '', text, flags=re.MULTILINE)
+    text = re.sub(r'\s*```$', '', text, flags=re.MULTILINE)
+    text = text.strip()
+
+    # 2. Extract the FIRST complete JSON object only
+    #    Find the first { and match to its closing }
+    brace_start = text.find('{')
+    if brace_start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escape_next = False
+    end_pos = -1
+
+    for i, ch in enumerate(text[brace_start:], start=brace_start):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == '\\' and in_string:
+            escape_next = True
+            continue
+        if ch == '"' and not escape_next:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                end_pos = i + 1
+                break   # Stop at FIRST complete object — ignore any trailing text
+
+    if end_pos == -1:
+        # JSON was truncated — try to close open braces
+        print("⚠️ JSON appears truncated, attempting repair...")
+        partial = text[brace_start:]
+        # Count unclosed braces
+        open_braces = partial.count('{') - partial.count('}')
+        repaired = partial + (']' if partial.rstrip().endswith('"') else '') + ('}' * open_braces)
+        try:
+            return json.loads(repaired)
+        except Exception:
+            return None
+
+    json_str = text[brace_start:end_pos]
+
+    try:
+        return json.loads(json_str)
+    except json.JSONDecodeError as e:
+        print(f"⚠️ JSON parse error: {e}")
+        # Last resort: try json.loads with strict=False won't help,
+        # but try removing trailing commas (common LLM mistake)
+        cleaned = re.sub(r',\s*([}\]])', r'\1', json_str)
+        try:
+            return json.loads(cleaned)
+        except Exception:
+            return None
 
 # ==================== DOCUMENT EXTRACTION ====================
 
 def extract_text_from_pdf_robust(file_content: bytes) -> str:
-    """Robust PDF extraction"""
     if PDFPLUMBER_AVAILABLE:
         try:
             import pdfplumber
@@ -143,7 +212,7 @@ def extract_text_from_pdf_robust(file_content: bytes) -> str:
                 return result
         except Exception as e:
             print(f"pdfplumber failed: {e}")
-    
+
     try:
         pdf_file = io.BytesIO(file_content)
         pdf_reader = PyPDF2.PdfReader(pdf_file)
@@ -155,17 +224,16 @@ def extract_text_from_pdf_robust(file_content: bytes) -> str:
         return f"Error extracting PDF: {str(e)}"
 
 def extract_text_from_docx_robust(file_content: bytes) -> str:
-    """Robust DOCX extraction"""
     try:
         docx_file = io.BytesIO(file_content)
         doc = Document(docx_file)
         full_text = []
-        
+
         for section in doc.sections:
             for para in section.header.paragraphs:
                 if para.text.strip():
                     full_text.append(para.text.strip())
-        
+
         for element in doc.element.body:
             if element.tag.endswith('p'):
                 for para in doc.paragraphs:
@@ -181,12 +249,12 @@ def extract_text_from_docx_robust(file_content: bytes) -> str:
                                 full_text.append(' | '.join(row_text))
                         full_text.append('')
                         break
-        
+
         for section in doc.sections:
             for para in section.footer.paragraphs:
                 if para.text.strip():
                     full_text.append(para.text.strip())
-        
+
         result = '\n'.join(full_text).strip()
         print(f"✅ DOCX extracted: {len(result)} chars")
         return result
@@ -209,10 +277,8 @@ def extract_text_from_docx_robust(file_content: bytes) -> str:
             return f"Error extracting DOCX: {str(e)}"
 
 def extract_text_from_file(filename: str, file_content: bytes) -> str:
-    """Main extraction router"""
     filename_lower = filename.lower()
     print(f"📄 Extracting: {filename}")
-    
     try:
         if filename_lower.endswith('.pdf'):
             return extract_text_from_pdf_robust(file_content)
@@ -233,7 +299,6 @@ def extract_text_from_file(filename: str, file_content: bytes) -> str:
 # ==================== AI ANALYSIS FUNCTIONS ====================
 
 def analyze_job_description(jd_content: str) -> dict:
-    """Extract key information from job description"""
     prompt = f"""Analyze this job description concisely.
 
 Job Description:
@@ -247,12 +312,11 @@ Provide:
 5. **ATS Keywords** (top 15)
 
 Be concise and clear."""
-
-    analysis = analyze_with_groq(prompt, max_tokens=2000)
+    # Text task — rotate models to spread load
+    analysis = analyze_with_groq(prompt, max_tokens=2000, prefer_large=False)
     return {"analysis": analysis, "success": True}
 
 def calculate_ats_score(jd_content: str, resume_content: str) -> dict:
-    """Calculate ATS score"""
     prompt = f"""You are an ATS expert. Analyze and score this resume.
 
 JOB DESCRIPTION:
@@ -269,12 +333,10 @@ Provide:
 5. **Strengths**
 
 Be specific."""
-
-    score_analysis = analyze_with_groq(prompt, max_tokens=2500)
+    score_analysis = analyze_with_groq(prompt, max_tokens=2500, prefer_large=False)
     return {"score_analysis": score_analysis, "success": True}
 
 def generate_resume_suggestions(jd_content: str, resume_content: str) -> dict:
-    """Generate resume improvement suggestions"""
     prompt = f"""Expert resume writer: Suggest improvements.
 
 JOB DESCRIPTION:
@@ -291,12 +353,10 @@ Provide:
 5. **Summary/Objective**
 
 Be specific and truthful."""
-
-    suggestions = analyze_with_groq(prompt, max_tokens=3000)
+    suggestions = analyze_with_groq(prompt, max_tokens=3000, prefer_large=False)
     return {"suggestions": suggestions, "success": True}
 
 def generate_interview_prep(jd_content: str, resume_content: str) -> dict:
-    """Generate interview prep"""
     prompt = f"""Create interview prep.
 
 JOB: {jd_content[:1500]}
@@ -309,21 +369,17 @@ Generate:
 4. **Topics to Study** (top 3)
 
 Be specific."""
-
-    prep = analyze_with_groq(prompt, max_tokens=3000)
+    prep = analyze_with_groq(prompt, max_tokens=3000, prefer_large=False)
     return {"interview_prep": prep, "success": True}
 
 def generate_youtube_resources(jd_content: str) -> list:
-    """Generate YouTube search links"""
     prompt = f"""List 5 technical topics to study for this job.
 
 Job: {jd_content[:1000]}
 
-List ONLY topic names, one per line."""
-
-    topics_text = analyze_with_groq(prompt, max_tokens=500)
-    topics = [t.strip() for t in topics_text.split('\n') if t.strip()][:5]
-    
+List ONLY topic names, one per line. No numbering, no extra text."""
+    topics_text = analyze_with_groq(prompt, max_tokens=500, prefer_large=False)
+    topics = [t.strip().lstrip('0123456789.-) ') for t in topics_text.split('\n') if t.strip()][:5]
     return [{
         "topic": topic,
         "url": f"https://www.youtube.com/results?search_query={topic.replace(' ', '+')}+tutorial"
@@ -332,20 +388,20 @@ List ONLY topic names, one per line."""
 # ==================== RESUME PARSING ====================
 
 def parse_resume_to_structured_data(resume_text: str) -> dict:
-    """Extract structured data from resume"""
     prompt = f"""Extract resume information as JSON.
 
 Resume:
 {resume_text}
 
-Return ONLY valid JSON:
+Return ONLY a valid JSON object with NO extra text before or after it:
 {{
   "name": "Full Name",
   "phone": "Phone",
   "email": "Email",
   "location": "City, State",
-  "linkedin": "URL or empty",
-  "github": "URL or empty",
+  "linkedin": "URL or empty string",
+  "github": "URL or empty string",
+  "summary": "Professional summary or empty string",
   "education": [{{"degree": "BE", "institution": "University", "year": "2020"}}],
   "technical_skills": {{
     "languages": ["Python"],
@@ -364,62 +420,84 @@ Return ONLY valid JSON:
   "projects": [{{"name": "Project", "description": "Desc", "technologies": "Tech"}}],
   "certifications": [],
   "achievements": []
-}}"""
+}}
+
+IMPORTANT: Return ONLY the JSON object. No explanation, no markdown, no text outside the braces."""
 
     try:
-        response = analyze_with_groq(prompt, max_tokens=4000)
-        response = response.strip()
-        
-        if '{' in response:
-            response = response[response.find('{'):response.rfind('}')+1]
-        response = response.replace('```json', '').replace('```', '').strip()
-        
-        parsed_data = json.loads(response)
-        print(f"✅ Parsed: {parsed_data.get('name', 'Unknown')}")
-        return parsed_data
+        # Use large model for JSON tasks — accuracy matters here
+        response = analyze_with_groq(prompt, max_tokens=4000, prefer_large=True)
+        parsed_data = extract_json_from_response(response)
+        if parsed_data:
+            print(f"✅ Parsed: {parsed_data.get('name', 'Unknown')}")
+            return parsed_data
+        else:
+            print("❌ Could not extract valid JSON from parse response")
+            return None
     except Exception as e:
         print(f"❌ Parse error: {str(e)}")
         return None
 
 def enhance_resume_data_with_ai(resume_data: dict, ai_suggestions: str, jd_analysis: str) -> dict:
-    """Enhance resume with before/after tracking"""
-    prompt = f"""Enhance resume with suggestions.
+    prompt = f"""You are a professional resume writer and grammar expert. Enhance the resume JSON.
 
-ORIGINAL:
-{json.dumps(resume_data, indent=2)}
+ORIGINAL RESUME JSON:
+{json.dumps(resume_data, indent=2)[:3000]}
 
-SUGGESTIONS:
-{ai_suggestions}
+SUGGESTIONS TO APPLY:
+{ai_suggestions[:1000]}
 
-Return ONLY JSON (no markdown, no explanations):"""
+STRICT RULES — follow every one:
+1. PRESERVE all fields exactly: name, email, phone, location, linkedin, github, education, certifications, achievements, projects, technical_skills
+2. NEVER remove or empty any field that has data in the original — especially "achievements" and "certifications"
+3. Fix ALL grammar, spelling, and punctuation errors in every text field
+4. Rewrite work experience bullet points in STAR format with action verbs and metrics where possible
+5. Do NOT invent skills, jobs, or experience not present in the original
+6. Keep the same JSON structure — do not add or remove keys
+
+Return ONLY a valid JSON object with ALL original fields preserved. No markdown, no explanation, nothing outside the braces."""
 
     try:
-        response = analyze_with_groq(prompt, max_tokens=4000)
-        response = response.strip()
-        
-        if '{' in response:
-            response = response[response.find('{'):response.rfind('}')+1]
-        response = response.replace('```json', '').replace('```', '').strip()
-        
-        enhanced_data = json.loads(response)
-        
+        # Large model for JSON — accuracy critical
+        response = analyze_with_groq(prompt, max_tokens=4000, prefer_large=True)
+        enhanced_data = extract_json_from_response(response)
+
+        if not enhanced_data:
+            print("⚠️ Enhancement returned invalid JSON — using original")
+            return {
+                "original": resume_data,
+                "enhanced": resume_data,
+                "changes": ["Enhancement failed — using original data"],
+                "success": False
+            }
+
+        # Safety net: restore any fields the AI silently dropped
+        critical_fields = ['achievements', 'certifications', 'education', 'projects',
+                           'name', 'email', 'phone', 'location', 'linkedin', 'github']
+        for field in critical_fields:
+            orig_val = resume_data.get(field)
+            enh_val  = enhanced_data.get(field)
+            if orig_val and (not enh_val or enh_val == [] or enh_val == ''):
+                enhanced_data[field] = orig_val
+                print(f"🔧 Restored dropped field: {field}")
+
         # Track changes
-        changes = []
+        changes = ["Fixed grammar and spelling across all sections"]
         orig_skills = set()
         new_skills = set()
         for category in ['languages', 'databases', 'frameworks', 'cloud', 'tools']:
             orig_skills.update(resume_data.get('technical_skills', {}).get(category, []))
             new_skills.update(enhanced_data.get('technical_skills', {}).get(category, []))
-        
+
         added_skills = new_skills - orig_skills
         if added_skills:
             changes.append(f"Added {len(added_skills)} skills: {', '.join(list(added_skills)[:3])}")
-        
+
         orig_exp = resume_data.get('work_experience', [])
         new_exp = enhanced_data.get('work_experience', [])
         if orig_exp and new_exp:
-            changes.append(f"Enhanced work experience bullets")
-        
+            changes.append("Enhanced work experience bullets with STAR format")
+
         print("✅ Enhanced successfully")
         return {
             "original": resume_data,
@@ -432,26 +510,22 @@ Return ONLY JSON (no markdown, no explanations):"""
         return {
             "original": resume_data,
             "enhanced": resume_data,
-            "changes": ["Enhancement failed - using original data"],
+            "changes": ["Enhancement failed — using original data"],
             "success": False
         }
 
 # ==================== URL FETCHING ====================
 
 def fetch_job_description_from_url(url: str) -> str:
-    """Fetch JD from URL"""
     if not SCRAPING_AVAILABLE:
         raise Exception("BeautifulSoup not installed")
-    
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
-        
         soup = BeautifulSoup(response.content, 'html.parser')
         for element in soup(['script', 'style', 'nav', 'header', 'footer']):
             element.decompose()
-        
         text = soup.get_text(separator='\n', strip=True)
         lines = [line.strip() for line in text.split('\n') if line.strip()]
         text = '\n'.join(lines)
@@ -463,7 +537,6 @@ def fetch_job_description_from_url(url: str) -> str:
 # ==================== LATEX GENERATION ====================
 
 def generate_latex_from_template(resume_data: dict) -> str:
-    """Generate LaTeX resume"""
     def escape_latex(text):
         if not text:
             return ""
@@ -475,39 +548,34 @@ def generate_latex_from_template(resume_data: dict) -> str:
         for old, new in replacements.items():
             text = text.replace(old, new)
         return text
-    
+
     latex = r"""\documentclass{resume}
 \usepackage[paperheight=12in,paperwidth=9in,left=0.4in,top=0.4in,right=0.4in,bottom=0.4in]{geometry}
 \newcommand{\tab}[1]{\hspace{.2667\textwidth}\rlap{#1}}
 \newcommand{\itab}[1]{\hspace{0em}\rlap{#1}}
 """
-    
     latex += f"\\name{{{escape_latex(resume_data.get('name', 'Your Name'))}}}\n"
-    
+
     phone = resume_data.get('phone', '')
     location = resume_data.get('location', '')
     if phone or location:
         latex += f"\\address{{{escape_latex(phone)} \\\\ {escape_latex(location)}}}\n"
-    
+
     email = resume_data.get('email', '')
     linkedin = resume_data.get('linkedin', '')
     github = resume_data.get('github', '')
-    
     contact_line = ""
     if email:
         contact_line += f"\\href{{{email}}}{{{escape_latex(email)}}}"
     if linkedin:
-        if contact_line:
-            contact_line += " \\\\ "
+        if contact_line: contact_line += " \\\\ "
         contact_line += f"\\href{{{linkedin}}}{{LinkedIn}}"
     if github:
-        if contact_line:
-            contact_line += " \\\\ "
+        if contact_line: contact_line += " \\\\ "
         contact_line += f"\\href{{{github}}}{{Github}}"
-    
     if contact_line:
         latex += f"\\address{{{contact_line}}}\n"
-    
+
     latex += "\\begin{document}\n\n"
     latex += "\\begin{rSection}{Education}\n"
     for edu in resume_data.get('education', []):
@@ -516,7 +584,7 @@ def generate_latex_from_template(resume_data: dict) -> str:
         year = escape_latex(edu.get('year', ''))
         latex += f"{{\\bf {degree}}}, {institution} \\hfill {{{year}}}\n"
     latex += "\\end{rSection}\n\n"
-    
+
     latex += "\\begin{rSection}{TECHNICAL SKILLS}\n"
     latex += "\\begin{tabular}{ @{} >{\\bfseries}l @{\\hspace{6ex}} l }\n"
     skills = resume_data.get('technical_skills', {})
@@ -529,7 +597,7 @@ def generate_latex_from_template(resume_data: dict) -> str:
     if skills.get('tools'):
         latex += f"TOOLS: & {', '.join([escape_latex(s) for s in skills['tools']])}\\\\\n"
     latex += "\\end{tabular}\\\\\n\\end{rSection}\n\n"
-    
+
     latex += "\\begin{rSection}{WORK EXPERIENCE}\n"
     for exp in resume_data.get('work_experience', []):
         title = escape_latex(exp.get('title', ''))
@@ -543,7 +611,7 @@ def generate_latex_from_template(resume_data: dict) -> str:
             latex += f"\\item {escape_latex(achievement)}\n"
         latex += "\\end{itemize}\n\n"
     latex += "\\end{rSection}\n\n"
-    
+
     if resume_data.get('projects'):
         latex += "\\begin{rSection}{PERSONAL PROJECTS}\n\\begin{itemize}\n\\itemsep -3pt {}\n"
         for project in resume_data['projects']:
@@ -551,30 +619,47 @@ def generate_latex_from_template(resume_data: dict) -> str:
             desc = escape_latex(project.get('description', ''))
             latex += f"\\item \\textbf{{{name}}} - {desc}\n"
         latex += "\\end{itemize}\n\\end{rSection}\n\n"
-    
+
     if resume_data.get('achievements'):
         latex += "\\begin{rSection}{ACHIEVEMENTS}\n\\begin{itemize}\n"
         for achievement in resume_data['achievements']:
             latex += f"\\item {escape_latex(achievement)}\n"
         latex += "\\end{itemize}\n\\end{rSection}\n\n"
-    
+
     if resume_data.get('certifications'):
         latex += "\\begin{rSection}{CERTIFICATION}\n\\begin{itemize}\n"
         for cert in resume_data['certifications']:
             latex += f"\\item {escape_latex(cert)}\n"
         latex += "\\end{itemize}\n\\end{rSection}\n\n"
-    
+
     latex += "\\end{document}\n"
     return latex
 
 # ==================== ENDPOINTS ====================
+
+@app.post("/parse-resume")
+async def parse_resume_endpoint(
+    resume: Optional[UploadFile] = File(None)
+):
+    """Quickly parse resume into structured data for the freshness check modal"""
+    try:
+        if not resume:
+            return {"success": False, "error": "No resume provided"}
+        content = await resume.read()
+        resume_text = extract_text_from_file(resume.filename, content)
+        parsed = parse_resume_to_structured_data(resume_text)
+        return {"success": True, "data": parsed}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 
 @app.post("/analyze")
 async def analyze_resume(
     job_description: Optional[UploadFile] = File(None),
     resume: Optional[UploadFile] = File(None),
     jd_text: Optional[str] = Form(None),
-    jd_url: Optional[str] = Form(None)
+    jd_url: Optional[str] = Form(None),
+    resume_json: Optional[str] = Form(None),   # Updated resume from frontend wizard
 ):
     """Complete AI-powered resume analysis"""
     try:
@@ -587,45 +672,79 @@ async def analyze_resume(
             jd_content = jd_text
         elif jd_url:
             jd_content = fetch_job_description_from_url(jd_url)
-        
-        # Extract Resume
+
+        # Extract Resume — prefer wizard-updated JSON if provided
         resume_content = ""
-        if resume:
+        resume_data_override = None
+
+        if resume_json:
+            try:
+                resume_data_override = json.loads(resume_json)
+                # Convert structured data back to text for AI analysis
+                exp_text = "\n".join([
+                    f"{e.get('title')} at {e.get('company')} ({e.get('duration')}): " +
+                    " ".join(e.get('achievements', []))
+                    for e in resume_data_override.get('work_experience', [])
+                ])
+                skills = resume_data_override.get('technical_skills', {})
+                all_skills = ", ".join([s for cat in skills.values() for s in (cat if isinstance(cat, list) else [])])
+                resume_content = f"""
+Name: {resume_data_override.get('name', '')}
+Skills: {all_skills}
+Experience:
+{exp_text}
+Projects: {", ".join([p.get('name', '') for p in resume_data_override.get('projects', [])])}
+"""
+                print(f"✅ Using wizard-updated resume for {resume_data_override.get('name')}")
+            except Exception as e:
+                print(f"⚠️ Could not parse resume_json: {e}")
+
+        if not resume_content and resume:
             content = await resume.read()
             resume_content = extract_text_from_file(resume.filename, content)
-        
+
         if not jd_content or not resume_content:
-            return {"success": False, "error": "Both JD and resume required"}
-        
-        # Run analyses
-        print("📊 Parsing...")
-        resume_data = parse_resume_to_structured_data(resume_content)
-        
+            return {"success": False, "error": "Both job description and resume are required"}
+
+        # ── Run all analyses
+        print("📊 Parsing resume...")
+        resume_data = resume_data_override or parse_resume_to_structured_data(resume_content)
+
         print("🔍 Analyzing JD...")
         jd_analysis = analyze_job_description(jd_content)
-        
+
         print("📊 ATS score...")
         ats_score = calculate_ats_score(jd_content, resume_content)
-        
+
         print("✨ Suggestions...")
         resume_suggestions = generate_resume_suggestions(jd_content, resume_content)
-        
+
         print("💡 Interview prep...")
         interview_prep = generate_interview_prep(jd_content, resume_content)
-        
+
         print("🎥 Resources...")
         youtube_resources = generate_youtube_resources(jd_content)
-        
-        # Enhancement
+
+        # ── Enhancement
         enhancement_result = None
-        if resume_data:
+        if resume_data and not resume_data_override:
             print("🚀 Enhancing...")
             enhancement_result = enhance_resume_data_with_ai(
                 resume_data,
                 resume_suggestions.get("suggestions", ""),
                 jd_analysis.get("analysis", "")
             )
-        
+
+        final_resume = (
+            enhancement_result.get("enhanced") if enhancement_result
+            else resume_data_override or resume_data
+        )
+        original_resume = (
+            enhancement_result.get("original") if enhancement_result
+            else resume_data_override or resume_data
+        )
+        changes = enhancement_result.get("changes", []) if enhancement_result else []
+
         return {
             "success": True,
             "data": {
@@ -634,9 +753,9 @@ async def analyze_resume(
                 "resume_suggestions": resume_suggestions,
                 "interview_prep": interview_prep,
                 "youtube_resources": youtube_resources,
-                "resume_data": enhancement_result.get("enhanced") if enhancement_result else resume_data,
-                "original_resume_data": enhancement_result.get("original") if enhancement_result else resume_data,
-                "changes_made": enhancement_result.get("changes", []) if enhancement_result else []
+                "resume_data": final_resume,
+                "original_resume_data": original_resume,
+                "changes_made": changes
             },
             "message": "Analysis complete!"
         }
@@ -644,19 +763,17 @@ async def analyze_resume(
         print(f"❌ Error: {str(e)}")
         return {"success": False, "error": str(e)}
 
+
 @app.post("/download-resume")
 async def download_optimized_resume(resume_data: str = Form(...)):
-    """Generate optimized resume"""
+    """Generate LaTeX resume file"""
     try:
         data = json.loads(resume_data)
         latex_content = generate_latex_from_template(data)
-        
         temp_dir = tempfile.mkdtemp()
         tex_path = os.path.join(temp_dir, "optimized_resume.tex")
-        
         with open(tex_path, 'w', encoding='utf-8') as f:
             f.write(latex_content)
-        
         return FileResponse(
             tex_path,
             media_type='application/x-tex',
