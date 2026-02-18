@@ -939,6 +939,39 @@ function App() {
       data.achievements = original.achievements
     }
 
+    // Keep section boundaries stable: prevent work entries from drifting into Projects
+    // due to model output quirks.
+    const normalizedProjects = []
+    const migratedToExperience = []
+    ;(data.projects || []).forEach((p) => {
+      const looksLikeExperience = Boolean(p?.company || p?.title || p?.duration || p?.location || Array.isArray(p?.achievements))
+      if (looksLikeExperience) {
+        migratedToExperience.push({
+          title: p.title || p.name || '',
+          company: p.company || '',
+          location: p.location || '',
+          duration: p.duration || '',
+          achievements: Array.isArray(p.achievements)
+            ? p.achievements.filter(Boolean)
+            : [p.description, p.technologies].filter(Boolean),
+        })
+      } else {
+        normalizedProjects.push(p)
+      }
+    })
+    if (migratedToExperience.length > 0) {
+      data.work_experience = [...(data.work_experience || []), ...migratedToExperience]
+      data.projects = normalizedProjects
+    }
+
+    // Safety fallback: if enhanced output emptied a section, restore from original parse.
+    if (original?.work_experience?.length && !(data.work_experience || []).length) {
+      data.work_experience = original.work_experience
+    }
+    if (original?.projects?.length && !(data.projects || []).length) {
+      data.projects = original.projects
+    }
+
     const skills = data.technical_skills || {}
     const skillRows = [
       skills.languages?.length  ? `<tr><td class="skill-cat">Languages</td><td>${skills.languages.join(', ')}</td></tr>`   : '',
@@ -1246,21 +1279,50 @@ ${(data.certifications || []).filter(Boolean).length ? `
 
   const gapKeywords = result?.data?.resume_suggestions?.suggestions ? extractGaps(result.data.resume_suggestions.suggestions) : []
 
-  // Mock rewrites from work experience diff
+  // Build rewrite suggestions from either structured diff (best) or AI suggestion text fallback.
   const buildRewrites = () => {
-    if (!result?.data?.original_resume_data || !result?.data?.resume_data) return []
-    const orig = result.data.original_resume_data.work_experience || []
-    const opt = result.data.resume_data.work_experience || []
     const out = []
-    orig.forEach((exp, ei) => {
-      const optExp = opt[ei]
-      if (!optExp) return
-      ;(exp.achievements || []).forEach((ach, ai) => {
-        const improved = optExp.achievements?.[ai]
-        if (improved && improved !== ach) out.push({ original: ach, improved, reason: `${exp.title} @ ${exp.company}` })
+
+    if (result?.data?.original_resume_data && result?.data?.resume_data) {
+      const orig = result.data.original_resume_data.work_experience || []
+      const opt = result.data.resume_data.work_experience || []
+      orig.forEach((exp, ei) => {
+        const optExp = opt[ei]
+        if (!optExp) return
+        ;(exp.achievements || []).forEach((ach, ai) => {
+          const improved = optExp.achievements?.[ai]
+          if (improved && improved !== ach) out.push({ original: ach, improved, reason: `${exp.title} @ ${exp.company}` })
+        })
       })
-    })
-    return out.slice(0, 5)
+    }
+
+    if (out.length > 0) return out.slice(0, 5)
+
+    // Fallback: parse rewritten bullet points from suggestion text so users still
+    // get accept/reject quick fixes even when structured diffs are unavailable.
+    const suggestionText = result?.data?.resume_suggestions?.suggestions || ''
+    const lines = suggestionText.split('\n').map(l => l.trim()).filter(Boolean)
+    const rewriteLines = []
+    let inRewriteSection = false
+    for (const line of lines) {
+      const ll = line.toLowerCase()
+      if (ll.includes('rewritten bullet') || ll.includes('bullet points')) {
+        inRewriteSection = true
+        continue
+      }
+      if (inRewriteSection && /^\d+\./.test(line) && !line.toLowerCase().includes('star')) {
+        rewriteLines.push(line.replace(/^\d+\.\s*/, ''))
+      } else if (inRewriteSection && /^[-•]/.test(line)) {
+        rewriteLines.push(line.replace(/^[-•]\s*/, ''))
+      } else if (inRewriteSection && /^\d+\./.test(line) && line.toLowerCase().includes('skills')) {
+        break
+      }
+    }
+
+    return rewriteLines
+      .filter(Boolean)
+      .slice(0, 5)
+      .map((improved, i) => ({ original: 'Current bullet can be stronger.', improved, reason: `AI quick fix ${i + 1}` }))
   }
   const rewrites = buildRewrites()
   const resumeExt = resumeFile?.name?.split('.').pop()?.toLowerCase()
