@@ -770,6 +770,8 @@ function App() {
   const [sessionResume, setSessionResume] = useState(null)
   const [resumeUpdated, setResumeUpdated] = useState(false)
   const [pendingFormData, setPendingFormData] = useState(null)
+  const [sessionRevision, setSessionRevision] = useState(0)
+  const [previousAtsAnalysis, setPreviousAtsAnalysis] = useState('')
 
   // Extract real skill/tech gaps from AI suggestion text
   // Uses a curated tech keyword list — avoids picking up generic English words
@@ -820,12 +822,14 @@ function App() {
     return found.slice(0, 6)
   }
 
-  const buildFormData = () => {
+  const buildFormData = (resumeOverride = null) => {
     const fd = new FormData()
     if (tabValue === 0 && jdFile)  fd.append('job_description', jdFile)
     if (tabValue === 1 && jdText)  fd.append('jd_text', jdText)
     if (tabValue === 2 && jdUrl)   fd.append('jd_url', jdUrl)
     if (resumeFile)                fd.append('resume', resumeFile)
+    const dataToUse = resumeOverride || sessionResume
+    if (dataToUse) fd.append('resume_json', JSON.stringify(dataToUse))
     return fd
   }
 
@@ -841,7 +845,7 @@ function App() {
       setFreshnessOpen(true)
     } else {
       // Already confirmed/updated resume this session — go straight to analysis
-      await runAnalysis(buildFormData())
+      await runAnalysis(buildFormData(), sessionResume || null)
     }
   }
 
@@ -874,18 +878,21 @@ function App() {
   }
 
   const handleWizardSave = async (updatedData) => {
+    if (result?.data?.ats_score?.score_analysis) {
+      setPreviousAtsAnalysis(result.data.ats_score.score_analysis)
+    }
     setSessionResume(updatedData)
     setResumeUpdated(true)
+    setSessionRevision(v => v + 1)
     setWizardOpen(false)
-    const fd = buildFormData()
-    fd.append('resume_json', JSON.stringify(updatedData))
+    const fd = buildFormData(updatedData)
     await runAnalysis(fd, updatedData)
   }
 
   const runAnalysis = async (formData, overrideResumeData = null) => {
     setLoading(true); setAnalyzing(true); setResult(null); setAnalysisStep(0)
     try {
-      const cacheKey = `${jdText || jdFile?.name || jdUrl}__${resumeFile?.name}__${resumeUpdated}`
+      const cacheKey = `${jdText || jdFile?.name || jdUrl}__${resumeFile?.name}__${resumeUpdated}__${sessionRevision}`
       if (analysisCache[cacheKey] && !overrideResumeData) { setResult(analysisCache[cacheKey]); return }
 
       const interval = setInterval(() => setAnalysisStep(p => p < analysisSteps.length - 1 ? p + 1 : p), 3000)
@@ -1256,6 +1263,8 @@ ${(data.certifications || []).filter(Boolean).length ? `
     return out.slice(0, 5)
   }
   const rewrites = buildRewrites()
+  const resumeExt = resumeFile?.name?.split('.').pop()?.toLowerCase()
+  const atsParsable = resumeExt ? ['pdf', 'docx', 'txt'].includes(resumeExt) : null
 
   return (
     <ThemeProvider theme={theme}>
@@ -1303,6 +1312,14 @@ ${(data.certifications || []).filter(Boolean).length ? `
           <Alert icon={<Lock />} severity="info" sx={{ mb: 3, borderRadius: '14px', fontSize: { xs: '0.9rem', md: '1rem' } }}>
             🔒 <strong>Your data is secure.</strong> We never store your resume. All processing is real-time.
           </Alert>
+
+          {resumeFile && (
+            <Alert severity={atsParsable ? 'success' : 'warning'} sx={{ mb: 3, borderRadius: '14px' }}>
+              {atsParsable
+                ? '🟢 ATS Parsability: likely readable format (' + resumeExt.toUpperCase() + ').'
+                : '🔴 ATS Parsability: this format may fail ATS parsing. Prefer PDF or DOCX.'}
+            </Alert>
+          )}
 
           {/* Session badge */}
           {resumeUpdated && (
@@ -1353,7 +1370,7 @@ ${(data.certifications || []).filter(Boolean).length ? `
                 {resumeUpdated && <Chip label="Updated ✓" size="small" color="success" sx={{ ml: 1, fontWeight: 700 }} />}
               </Typography>
 
-              <DropZone file={resumeFile} setFile={(f) => { setResumeFile(f); setSessionResume(null); setResumeUpdated(false) }} accent="secondary" label="Drop your resume" />
+              <DropZone file={resumeFile} setFile={(f) => { setResumeFile(f); setSessionResume(null); setResumeUpdated(false); setSessionRevision(0); setPreviousAtsAnalysis('') }} accent="secondary" label="Drop your resume" />
 
               {resumeFile && sessionResume && (
                 <Box textAlign="center" mt={1.5}>
@@ -1410,6 +1427,26 @@ ${(data.certifications || []).filter(Boolean).length ? `
                   </Stack>
                 </Paper>
 
+                {previousAtsAnalysis && resumeUpdated && result?.data?.ats_score?.score_analysis && (
+                  <Paper elevation={1} sx={{ p: { xs: 3, md: 4 }, borderRadius: '18px' }}>
+                    <Typography variant="h6" fontWeight={800} gutterBottom>ATS comparison (before vs after edit)</Typography>
+                    <Grid container spacing={2}>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>Before edit</Typography>
+                        <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#fff7ed', border: '1px solid #fed7aa', maxHeight: 240, overflow: 'auto' }}>
+                          <FormattedText text={formatAIResponse(previousAtsAnalysis)} />
+                        </Box>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>After edit</Typography>
+                        <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#ecfeff', border: '1px solid #a5f3fc', maxHeight: 240, overflow: 'auto' }}>
+                          <FormattedText text={formatAIResponse(result.data.ats_score.score_analysis)} />
+                        </Box>
+                      </Grid>
+                    </Grid>
+                  </Paper>
+                )}
+
                 {/* ATS Score */}
                 <Card elevation={3} sx={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%)', color: 'white', borderRadius: '18px' }}>
                   <CardContent sx={{ p: { xs: 3, md: 4 } }}>
@@ -1419,6 +1456,16 @@ ${(data.certifications || []).filter(Boolean).length ? `
                     </Stack>
                     <Paper elevation={0} sx={{ p: { xs: 2.5, md: 3.5 }, bgcolor: 'rgba(255,255,255,0.97)', color: 'text.primary', borderRadius: '14px' }}>
                       <FormattedText text={formatAIResponse(result.data.ats_score.score_analysis)} />
+                      {Array.isArray(result.data.ats_score?.missing_keywords) && result.data.ats_score.missing_keywords.length > 0 && (
+                        <Box mt={2}>
+                          <Typography variant="subtitle2" fontWeight={700} gutterBottom>Verified missing keywords (rule-based)</Typography>
+                          <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                            {result.data.ats_score.missing_keywords.map((kw) => (
+                              <Chip key={kw} size="small" color="warning" variant="outlined" label={kw} />
+                            ))}
+                          </Stack>
+                        </Box>
+                      )}
                     </Paper>
                   </CardContent>
                 </Card>
