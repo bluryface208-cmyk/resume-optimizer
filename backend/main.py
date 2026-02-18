@@ -334,7 +334,35 @@ Provide:
 
 Be specific."""
     score_analysis = analyze_with_groq(prompt, max_tokens=2500, prefer_large=False)
-    return {"score_analysis": score_analysis, "success": True}
+
+    # Deterministic keyword gap check to reduce LLM hallucinations in "missing keywords"
+    # shown in the frontend ATS panel.
+    known_keywords = {
+        'python','javascript','typescript','java','c++','c#','go','rust','ruby','php','swift','kotlin','scala','r','matlab',
+        'react','vue','angular','next.js','node.js','express','django','fastapi','flask','spring','.net',
+        'html','css','sql','mysql','postgresql','mongodb','redis','graphql','rest','grpc',
+        'aws','azure','gcp','docker','kubernetes','terraform','jenkins','github actions',
+        'pandas','numpy','tensorflow','pytorch','spark','hadoop','airflow','tableau','power bi',
+        'git','linux','agile','scrum','ci/cd','microservices'
+    }
+
+    def present_keywords(text: str) -> set:
+        found = set()
+        lowered = f" {text.lower()} "
+        for kw in known_keywords:
+            if f" {kw} " in lowered or kw in lowered:
+                found.add(kw)
+        return found
+
+    jd_keywords = present_keywords(jd_content)
+    resume_keywords = present_keywords(resume_content)
+    missing_keywords = sorted(jd_keywords - resume_keywords)[:5]
+
+    return {
+        "score_analysis": score_analysis,
+        "missing_keywords": missing_keywords,
+        "success": True,
+    }
 
 def generate_resume_suggestions(jd_content: str, resume_content: str) -> dict:
     prompt = f"""Expert resume writer: Suggest improvements.
