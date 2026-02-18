@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import axios from 'axios'
 import {
   Container, Paper, Typography, Button, TextField, Box, Tabs, Tab,
@@ -675,12 +675,10 @@ function GapAnalysis({ gaps }) {
   )
 }
 
-function BulletRewrites({ rewrites }) {
-  const [accepted, setAccepted] = useState({})
+function BulletRewrites({ rewrites, acceptedMap = {}, onToggle }) {
   if (!rewrites || rewrites.length === 0) return null
 
-  const toggle = (i) => setAccepted(p => ({ ...p, [i]: !p[i] }))
-  const acceptedCount = Object.values(accepted).filter(Boolean).length
+  const acceptedCount = Object.values(acceptedMap).filter(Boolean).length
 
   return (
     <Box>
@@ -698,7 +696,7 @@ function BulletRewrites({ rewrites }) {
         {rewrites.map((rw, i) => (
           <Paper key={i} variant="outlined" sx={{
             borderRadius: '14px', overflow: 'hidden',
-            borderColor: accepted[i] ? 'success.light' : 'divider',
+            borderColor: acceptedMap[i] ? 'success.light' : 'divider',
             transition: 'border-color 0.2s'
           }}>
             <Grid container>
@@ -710,25 +708,25 @@ function BulletRewrites({ rewrites }) {
                   {rw.original}
                 </Typography>
               </Grid>
-              <Grid size={{ xs: 12, md: 6 }} sx={{ p: { xs: 2, md: 2.5 }, bgcolor: accepted[i] ? '#f0fdf4' : '#fafbfc' }}>
+              <Grid size={{ xs: 12, md: 6 }} sx={{ p: { xs: 2, md: 2.5 }, bgcolor: acceptedMap[i] ? '#f0fdf4' : '#fafbfc' }}>
                 <Typography variant="caption" fontWeight={700} color="success.dark" sx={{ textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                   ✅ Suggested
                 </Typography>
-                <Typography variant="body2" sx={{ mt: 1, lineHeight: 1.7, fontWeight: accepted[i] ? 600 : 400 }}>
+                <Typography variant="body2" sx={{ mt: 1, lineHeight: 1.7, fontWeight: acceptedMap[i] ? 600 : 400 }}>
                   {rw.improved}
                 </Typography>
               </Grid>
             </Grid>
             <Box sx={{ px: { xs: 2, md: 2.5 }, py: 1.5, bgcolor: '#f8fafc', borderTop: '1px solid', borderColor: 'divider' }}>
               <Stack direction="row" spacing={1.5} alignItems="center">
-                <Button size="small" variant={accepted[i] ? 'contained' : 'outlined'} color="success"
-                  startIcon={accepted[i] ? <CheckCircle /> : <CheckBoxOutlineBlank />}
-                  onClick={() => toggle(i)}
+                <Button size="small" variant={acceptedMap[i] ? 'contained' : 'outlined'} color="success"
+                  startIcon={acceptedMap[i] ? <CheckCircle /> : <CheckBoxOutlineBlank />}
+                  onClick={() => onToggle?.(i)}
                   sx={{ borderRadius: '8px', fontWeight: 700 }}>
-                  {accepted[i] ? 'Accepted' : 'Accept'}
+                  {acceptedMap[i] ? 'Accepted' : 'Accept'}
                 </Button>
-                {accepted[i] && (
-                  <Button size="small" variant="outlined" color="error" onClick={() => toggle(i)}
+                {acceptedMap[i] && (
+                  <Button size="small" variant="outlined" color="error" onClick={() => onToggle?.(i)}
                     sx={{ borderRadius: '8px' }}>
                     Revert
                   </Button>
@@ -770,6 +768,10 @@ function App() {
   const [sessionResume, setSessionResume] = useState(null)
   const [resumeUpdated, setResumeUpdated] = useState(false)
   const [pendingFormData, setPendingFormData] = useState(null)
+  const [sessionRevision, setSessionRevision] = useState(0)
+  const [previousAtsAnalysis, setPreviousAtsAnalysis] = useState('')
+  const [acceptedRewrites, setAcceptedRewrites] = useState({})
+  const toggleAcceptedRewrite = (index) => setAcceptedRewrites((prev) => ({ ...prev, [index]: !prev[index] }))
 
   // Extract real skill/tech gaps from AI suggestion text
   // Uses a curated tech keyword list — avoids picking up generic English words
@@ -820,12 +822,14 @@ function App() {
     return found.slice(0, 6)
   }
 
-  const buildFormData = () => {
+  const buildFormData = (resumeOverride = null) => {
     const fd = new FormData()
     if (tabValue === 0 && jdFile)  fd.append('job_description', jdFile)
     if (tabValue === 1 && jdText)  fd.append('jd_text', jdText)
     if (tabValue === 2 && jdUrl)   fd.append('jd_url', jdUrl)
     if (resumeFile)                fd.append('resume', resumeFile)
+    const dataToUse = resumeOverride || sessionResume
+    if (dataToUse) fd.append('resume_json', JSON.stringify(dataToUse))
     return fd
   }
 
@@ -841,7 +845,7 @@ function App() {
       setFreshnessOpen(true)
     } else {
       // Already confirmed/updated resume this session — go straight to analysis
-      await runAnalysis(buildFormData())
+      await runAnalysis(buildFormData(), sessionResume || null)
     }
   }
 
@@ -874,18 +878,23 @@ function App() {
   }
 
   const handleWizardSave = async (updatedData) => {
+    setAcceptedRewrites({})
+    if (result?.data?.ats_score?.score_analysis) {
+      setPreviousAtsAnalysis(result.data.ats_score.score_analysis)
+    }
     setSessionResume(updatedData)
     setResumeUpdated(true)
+    setSessionRevision(v => v + 1)
     setWizardOpen(false)
-    const fd = buildFormData()
-    fd.append('resume_json', JSON.stringify(updatedData))
+    const fd = buildFormData(updatedData)
     await runAnalysis(fd, updatedData)
   }
 
   const runAnalysis = async (formData, overrideResumeData = null) => {
+    setAcceptedRewrites({})
     setLoading(true); setAnalyzing(true); setResult(null); setAnalysisStep(0)
     try {
-      const cacheKey = `${jdText || jdFile?.name || jdUrl}__${resumeFile?.name}__${resumeUpdated}`
+      const cacheKey = `${jdText || jdFile?.name || jdUrl}__${resumeFile?.name}__${resumeUpdated}__${sessionRevision}`
       if (analysisCache[cacheKey] && !overrideResumeData) { setResult(analysisCache[cacheKey]); return }
 
       const interval = setInterval(() => setAnalysisStep(p => p < analysisSteps.length - 1 ? p + 1 : p), 3000)
@@ -930,6 +939,73 @@ function App() {
     // Also restore top-level achievements if empty
     if (original && (!data.achievements?.filter(Boolean).length) && original.achievements?.filter(Boolean).length) {
       data.achievements = original.achievements
+    }
+
+    // Keep section boundaries stable: prevent work entries from drifting into Projects
+    // due to model output quirks.
+    const normalizedProjects = []
+    const migratedToExperience = []
+    ;(data.projects || []).forEach((p) => {
+      const looksLikeExperience = Boolean(p?.company || p?.title || p?.duration || p?.location || Array.isArray(p?.achievements))
+      if (looksLikeExperience) {
+        migratedToExperience.push({
+          title: p.title || p.name || '',
+          company: p.company || '',
+          location: p.location || '',
+          duration: p.duration || '',
+          achievements: Array.isArray(p.achievements)
+            ? p.achievements.filter(Boolean)
+            : [p.description, p.technologies].filter(Boolean),
+        })
+      } else {
+        normalizedProjects.push(p)
+      }
+    })
+    if (migratedToExperience.length > 0) {
+      data.work_experience = [...(data.work_experience || []), ...migratedToExperience]
+      data.projects = normalizedProjects
+    }
+
+    // Safety fallback: if enhanced output emptied a section, restore from original parse.
+    if (original?.work_experience?.length && !(data.work_experience || []).length) {
+      data.work_experience = original.work_experience
+    }
+    if (original?.projects?.length && !(data.projects || []).length) {
+      data.projects = original.projects
+    }
+
+    // Apply only user-accepted rewrites into the downloadable resume.
+    const chosenRewrites = (rewrites || []).filter((_, i) => acceptedRewrites[i])
+    if ((rewrites || []).length > 0 && chosenRewrites.length === 0) {
+      const proceed = window.confirm('You have AI suggestions but none are accepted yet. Continue download without applying suggestions?')
+      if (!proceed) return
+    }
+    if (chosenRewrites.length > 0) {
+      data.work_experience = [...(data.work_experience || [])]
+      chosenRewrites.forEach((rw) => {
+        let replaced = false
+        data.work_experience = data.work_experience.map((exp) => {
+          const achievements = [...(exp.achievements || [])]
+          const idx = achievements.findIndex((a) =>
+            rw.original && rw.original !== 'Current bullet can be stronger.'
+              ? a?.trim() === rw.original.trim()
+              : false
+          )
+          if (idx !== -1) {
+            achievements[idx] = rw.improved
+            replaced = true
+          }
+          return { ...exp, achievements }
+        })
+
+        if (!replaced && data.work_experience.length > 0) {
+          const first = data.work_experience[0]
+          data.work_experience[0] = {
+            ...first,
+            achievements: [...(first.achievements || []), rw.improved]
+          }
+        }
+      })
     }
 
     const skills = data.technical_skills || {}
@@ -1239,23 +1315,101 @@ ${(data.certifications || []).filter(Boolean).length ? `
 
   const gapKeywords = result?.data?.resume_suggestions?.suggestions ? extractGaps(result.data.resume_suggestions.suggestions) : []
 
-  // Mock rewrites from work experience diff
+  // Build rewrite suggestions from either structured diff (best) or AI suggestion text fallback.
   const buildRewrites = () => {
-    if (!result?.data?.original_resume_data || !result?.data?.resume_data) return []
-    const orig = result.data.original_resume_data.work_experience || []
-    const opt = result.data.resume_data.work_experience || []
     const out = []
-    orig.forEach((exp, ei) => {
-      const optExp = opt[ei]
-      if (!optExp) return
-      ;(exp.achievements || []).forEach((ach, ai) => {
-        const improved = optExp.achievements?.[ai]
-        if (improved && improved !== ach) out.push({ original: ach, improved, reason: `${exp.title} @ ${exp.company}` })
+
+    if (result?.data?.original_resume_data && result?.data?.resume_data) {
+      const orig = result.data.original_resume_data.work_experience || []
+      const opt = result.data.resume_data.work_experience || []
+      orig.forEach((exp, ei) => {
+        const optExp = opt[ei]
+        if (!optExp) return
+        ;(exp.achievements || []).forEach((ach, ai) => {
+          const improved = optExp.achievements?.[ai]
+          if (improved && improved !== ach) out.push({ original: ach, improved, reason: `${exp.title} @ ${exp.company}` })
+        })
       })
-    })
-    return out.slice(0, 5)
+    }
+
+    if (out.length > 0) return out.slice(0, 5)
+
+    // Fallback: parse rewritten bullet points from suggestion text so users still
+    // get accept/reject quick fixes even when structured diffs are unavailable.
+    const suggestionText = result?.data?.resume_suggestions?.suggestions || ''
+    const lines = suggestionText.split('\n').map(l => l.trim()).filter(Boolean)
+    const rewriteLines = []
+    let inRewriteSection = false
+    for (const line of lines) {
+      const ll = line.toLowerCase()
+      if (ll.includes('rewritten bullet') || ll.includes('bullet points')) {
+        inRewriteSection = true
+        continue
+      }
+      if (inRewriteSection && /^\d+\./.test(line) && !line.toLowerCase().includes('star')) {
+        rewriteLines.push(line.replace(/^\d+\.\s*/, ''))
+      } else if (inRewriteSection && /^[-•]/.test(line)) {
+        rewriteLines.push(line.replace(/^[-•]\s*/, ''))
+      } else if (inRewriteSection && /^\d+\./.test(line) && line.toLowerCase().includes('skills')) {
+        break
+      }
+    }
+
+    const currentBullets = (
+      result?.data?.original_resume_data?.work_experience ||
+      sessionResume?.work_experience ||
+      result?.data?.resume_data?.work_experience ||
+      []
+    ).flatMap((exp) => (exp.achievements || []).filter(Boolean))
+
+    const normalize = (text = '') => text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ')
+    const STOPWORDS = new Set(['and', 'or', 'the', 'a', 'an', 'to', 'for', 'with', 'of', 'in', 'on', 'by', 'at'])
+    const tokens = (text) => normalize(text).split(/\s+/).filter(t => t && !STOPWORDS.has(t))
+    const overlapScore = (a, b) => {
+      const ta = new Set(tokens(a))
+      const tb = new Set(tokens(b))
+      if (!ta.size || !tb.size) return 0
+      let overlap = 0
+      ta.forEach(t => { if (tb.has(t)) overlap += 1 })
+      return overlap
+    }
+
+    const available = [...currentBullets]
+    return rewriteLines
+      .filter(Boolean)
+      .slice(0, 5)
+      .map((improved, i) => {
+        let bestIdx = -1
+        let bestScore = -1
+        available.forEach((bullet, bi) => {
+          const score = overlapScore(improved, bullet)
+          if (score > bestScore) {
+            bestScore = score
+            bestIdx = bi
+          }
+        })
+        const matchedOriginal = bestIdx >= 0 ? available.splice(bestIdx, 1)[0] : null
+        return {
+          original: matchedOriginal || currentBullets[i] || 'Current bullet can be stronger.',
+          improved,
+          reason: `AI quick fix ${i + 1}`
+        }
+      })
   }
-  const rewrites = buildRewrites()
+  const rewrites = useMemo(() => buildRewrites(), [result, sessionResume])
+  const resumeExt = resumeFile?.name?.split('.').pop()?.toLowerCase()
+  const atsParsable = resumeExt ? ['pdf', 'docx', 'txt'].includes(resumeExt) : null
+
+  const extractAtsNumber = (text) => {
+    if (!text) return null
+    const match = text.match(/overall\s*ats\s*score[^\d]*(\d{1,3})\s*\/\s*100/i) || text.match(/(\d{1,3})\s*\/\s*100/)
+    return match ? Math.min(100, Number(match[1])) : null
+  }
+  const currentAtsNumber = extractAtsNumber(result?.data?.ats_score?.score_analysis)
+  const previousAtsNumber = extractAtsNumber(previousAtsAnalysis)
+  const atsDelta = (currentAtsNumber !== null && previousAtsNumber !== null)
+    ? currentAtsNumber - previousAtsNumber
+    : null
 
   return (
     <ThemeProvider theme={theme}>
@@ -1303,6 +1457,14 @@ ${(data.certifications || []).filter(Boolean).length ? `
           <Alert icon={<Lock />} severity="info" sx={{ mb: 3, borderRadius: '14px', fontSize: { xs: '0.9rem', md: '1rem' } }}>
             🔒 <strong>Your data is secure.</strong> We never store your resume. All processing is real-time.
           </Alert>
+
+          {resumeFile && (
+            <Alert severity={atsParsable ? 'success' : 'warning'} sx={{ mb: 3, borderRadius: '14px' }}>
+              {atsParsable
+                ? '🟢 ATS Parsability: likely readable format (' + resumeExt.toUpperCase() + ').'
+                : '🔴 ATS Parsability: this format may fail ATS parsing. Prefer PDF or DOCX.'}
+            </Alert>
+          )}
 
           {/* Session badge */}
           {resumeUpdated && (
@@ -1353,7 +1515,7 @@ ${(data.certifications || []).filter(Boolean).length ? `
                 {resumeUpdated && <Chip label="Updated ✓" size="small" color="success" sx={{ ml: 1, fontWeight: 700 }} />}
               </Typography>
 
-              <DropZone file={resumeFile} setFile={(f) => { setResumeFile(f); setSessionResume(null); setResumeUpdated(false) }} accent="secondary" label="Drop your resume" />
+              <DropZone file={resumeFile} setFile={(f) => { setResumeFile(f); setSessionResume(null); setResumeUpdated(false); setSessionRevision(0); setPreviousAtsAnalysis(''); setAcceptedRewrites({}) }} accent="secondary" label="Drop your resume" />
 
               {resumeFile && sessionResume && (
                 <Box textAlign="center" mt={1.5}>
@@ -1410,6 +1572,76 @@ ${(data.certifications || []).filter(Boolean).length ? `
                   </Stack>
                 </Paper>
 
+                {resumeUpdated && result?.data?.ats_score?.score_analysis && (
+                  <Paper elevation={1} sx={{ p: { xs: 3, md: 4 }, borderRadius: '18px' }}>
+                    {!previousAtsAnalysis && (
+                      <Alert severity="info" sx={{ mb: 2, borderRadius: '10px' }}>
+                        ATS before/after comparison appears after at least one more edit + re-analyze in this session.
+                      </Alert>
+                    )}
+                    <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ xs: 'flex-start', sm: 'center' }} mb={1.5}>
+                      <Typography variant="h6" fontWeight={800}>ATS comparison (before vs after edit)</Typography>
+                      {atsDelta !== null && (
+                        <Chip
+                          color={atsDelta >= 0 ? 'success' : 'error'}
+                          label={`ATS ${previousAtsNumber} → ${currentAtsNumber} (${atsDelta >= 0 ? '+' : ''}${atsDelta})`}
+                          sx={{ fontWeight: 700 }}
+                        />
+                      )}
+                    </Stack>
+                    {previousAtsAnalysis ? (
+                      <Grid container spacing={2}>
+                        <Grid size={{ xs: 12, md: 6 }}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>Before edit</Typography>
+                          <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#fff7ed', border: '1px solid #fed7aa', maxHeight: 240, overflow: 'auto' }}>
+                            <FormattedText text={formatAIResponse(previousAtsAnalysis)} />
+                          </Box>
+                        </Grid>
+                        <Grid size={{ xs: 12, md: 6 }}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>After edit</Typography>
+                          <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#ecfeff', border: '1px solid #a5f3fc', maxHeight: 240, overflow: 'auto' }}>
+                            <FormattedText text={formatAIResponse(result.data.ats_score.score_analysis)} />
+                          </Box>
+                        </Grid>
+                      </Grid>
+                    ) : (
+                      <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#ecfeff', border: '1px solid #a5f3fc' }}>
+                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>Current ATS analysis</Typography>
+                        <FormattedText text={formatAIResponse(result.data.ats_score.score_analysis)} />
+                      </Box>
+                    )}
+                  </Paper>
+                )}
+
+                {resumeUpdated && result?.data?.original_resume_data && result?.data?.resume_data && (
+                  <Paper elevation={1} sx={{ p: { xs: 3, md: 4 }, borderRadius: '18px' }}>
+                    <Typography variant="h6" fontWeight={800} gutterBottom>Resume content comparison (before vs after)</Typography>
+                    <Typography variant="body2" color="text.secondary" mb={2}>
+                      Review this carefully. Only download once you accept changes you can confidently explain in interviews.
+                    </Typography>
+                    <Grid container spacing={2}>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>Current data (before)</Typography>
+                        <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#fff7ed', border: '1px solid #fed7aa', maxHeight: 280, overflow: 'auto' }}>
+                          <Typography variant="body2" fontWeight={700} mb={0.5}>Experience bullets</Typography>
+                          <ul style={{ marginTop: 4 }}>
+                            {(result.data.original_resume_data.work_experience || []).flatMap((e) => e.achievements || []).filter(Boolean).slice(0, 6).map((a, i) => <li key={`ob-${i}`}><Typography variant="body2">{a}</Typography></li>)}
+                          </ul>
+                        </Box>
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>AI-updated data (after)</Typography>
+                        <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#ecfeff', border: '1px solid #a5f3fc', maxHeight: 280, overflow: 'auto' }}>
+                          <Typography variant="body2" fontWeight={700} mb={0.5}>Experience bullets</Typography>
+                          <ul style={{ marginTop: 4 }}>
+                            {(result.data.resume_data.work_experience || []).flatMap((e) => e.achievements || []).filter(Boolean).slice(0, 6).map((a, i) => <li key={`nb-${i}`}><Typography variant="body2">{a}</Typography></li>)}
+                          </ul>
+                        </Box>
+                      </Grid>
+                    </Grid>
+                  </Paper>
+                )}
+
                 {/* ATS Score */}
                 <Card elevation={3} sx={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%)', color: 'white', borderRadius: '18px' }}>
                   <CardContent sx={{ p: { xs: 3, md: 4 } }}>
@@ -1419,6 +1651,16 @@ ${(data.certifications || []).filter(Boolean).length ? `
                     </Stack>
                     <Paper elevation={0} sx={{ p: { xs: 2.5, md: 3.5 }, bgcolor: 'rgba(255,255,255,0.97)', color: 'text.primary', borderRadius: '14px' }}>
                       <FormattedText text={formatAIResponse(result.data.ats_score.score_analysis)} />
+                      {Array.isArray(result.data.ats_score?.missing_keywords) && result.data.ats_score.missing_keywords.length > 0 && (
+                        <Box mt={2}>
+                          <Typography variant="subtitle2" fontWeight={700} gutterBottom>Verified missing keywords (rule-based)</Typography>
+                          <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                            {result.data.ats_score.missing_keywords.map((kw) => (
+                              <Chip key={kw} size="small" color="warning" variant="outlined" label={kw} />
+                            ))}
+                          </Stack>
+                        </Box>
+                      )}
                     </Paper>
                   </CardContent>
                 </Card>
@@ -1433,7 +1675,10 @@ ${(data.certifications || []).filter(Boolean).length ? `
                 {/* ── ETHICAL: Bullet Rewrites with Accept/Reject */}
                 {rewrites.length > 0 && (
                   <Paper elevation={1} sx={{ p: { xs: 3, md: 4 }, borderRadius: '18px' }}>
-                    <BulletRewrites rewrites={rewrites} />
+                    <Alert severity="info" sx={{ mb: 2, borderRadius: '10px' }}>
+                      Only the rewrites you <strong>Accept</strong> are applied in Preview & Download.
+                    </Alert>
+                    <BulletRewrites rewrites={rewrites} acceptedMap={acceptedRewrites} onToggle={toggleAcceptedRewrite} />
                   </Paper>
                 )}
 
