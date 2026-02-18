@@ -889,6 +889,7 @@ function App() {
   }
 
   const handleWizardSave = async (updatedData) => {
+    setAcceptedRewrites({})
     if (result?.data?.ats_score?.score_analysis) {
       setPreviousAtsAnalysis(result.data.ats_score.score_analysis)
     }
@@ -901,6 +902,7 @@ function App() {
   }
 
   const runAnalysis = async (formData, overrideResumeData = null) => {
+    setAcceptedRewrites({})
     setLoading(true); setAnalyzing(true); setResult(null); setAnalysisStep(0)
     try {
       const cacheKey = `${jdText || jdFile?.name || jdUrl}__${resumeFile?.name}__${resumeUpdated}__${sessionRevision}`
@@ -985,6 +987,10 @@ function App() {
 
     // Apply only user-accepted rewrites into the downloadable resume.
     const chosenRewrites = (rewrites || []).filter((_, i) => acceptedRewrites[i])
+    if ((rewrites || []).length > 0 && chosenRewrites.length === 0) {
+      const proceed = window.confirm('You have AI suggestions but none are accepted yet. Continue download without applying suggestions?')
+      if (!proceed) return
+    }
     if (chosenRewrites.length > 0) {
       data.work_experience = [...(data.work_experience || [])]
       chosenRewrites.forEach((rw) => {
@@ -1367,14 +1373,39 @@ ${(data.certifications || []).filter(Boolean).length ? `
       []
     ).flatMap((exp) => (exp.achievements || []).filter(Boolean))
 
+    const normalize = (text = '') => text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ')
+    const STOPWORDS = new Set(['and', 'or', 'the', 'a', 'an', 'to', 'for', 'with', 'of', 'in', 'on', 'by', 'at'])
+    const tokens = (text) => normalize(text).split(/\s+/).filter(t => t && !STOPWORDS.has(t))
+    const overlapScore = (a, b) => {
+      const ta = new Set(tokens(a))
+      const tb = new Set(tokens(b))
+      if (!ta.size || !tb.size) return 0
+      let overlap = 0
+      ta.forEach(t => { if (tb.has(t)) overlap += 1 })
+      return overlap
+    }
+
+    const available = [...currentBullets]
     return rewriteLines
       .filter(Boolean)
       .slice(0, 5)
-      .map((improved, i) => ({
-        original: currentBullets[i] || 'Current bullet can be stronger.',
-        improved,
-        reason: `AI quick fix ${i + 1}`
-      }))
+      .map((improved, i) => {
+        let bestIdx = -1
+        let bestScore = -1
+        available.forEach((bullet, bi) => {
+          const score = overlapScore(improved, bullet)
+          if (score > bestScore) {
+            bestScore = score
+            bestIdx = bi
+          }
+        })
+        const matchedOriginal = bestIdx >= 0 ? available.splice(bestIdx, 1)[0] : null
+        return {
+          original: matchedOriginal || currentBullets[i] || 'Current bullet can be stronger.',
+          improved,
+          reason: `AI quick fix ${i + 1}`
+        }
+      })
   }
   const rewrites = buildRewrites()
   const resumeExt = resumeFile?.name?.split('.').pop()?.toLowerCase()
@@ -1495,7 +1526,7 @@ ${(data.certifications || []).filter(Boolean).length ? `
                 {resumeUpdated && <Chip label="Updated ✓" size="small" color="success" sx={{ ml: 1, fontWeight: 700 }} />}
               </Typography>
 
-              <DropZone file={resumeFile} setFile={(f) => { setResumeFile(f); setSessionResume(null); setResumeUpdated(false); setSessionRevision(0); setPreviousAtsAnalysis('') }} accent="secondary" label="Drop your resume" />
+              <DropZone file={resumeFile} setFile={(f) => { setResumeFile(f); setSessionResume(null); setResumeUpdated(false); setSessionRevision(0); setPreviousAtsAnalysis(''); setAcceptedRewrites({}) }} accent="secondary" label="Drop your resume" />
 
               {resumeFile && sessionResume && (
                 <Box textAlign="center" mt={1.5}>
@@ -1552,8 +1583,13 @@ ${(data.certifications || []).filter(Boolean).length ? `
                   </Stack>
                 </Paper>
 
-                {previousAtsAnalysis && resumeUpdated && result?.data?.ats_score?.score_analysis && (
+                {resumeUpdated && result?.data?.ats_score?.score_analysis && (
                   <Paper elevation={1} sx={{ p: { xs: 3, md: 4 }, borderRadius: '18px' }}>
+                    {!previousAtsAnalysis && (
+                      <Alert severity="info" sx={{ mb: 2, borderRadius: '10px' }}>
+                        ATS before/after comparison appears after at least one more edit + re-analyze in this session.
+                      </Alert>
+                    )}
                     <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ xs: 'flex-start', sm: 'center' }} mb={1.5}>
                       <Typography variant="h6" fontWeight={800}>ATS comparison (before vs after edit)</Typography>
                       {atsDelta !== null && (
@@ -1564,20 +1600,27 @@ ${(data.certifications || []).filter(Boolean).length ? `
                         />
                       )}
                     </Stack>
-                    <Grid container spacing={2}>
-                      <Grid size={{ xs: 12, md: 6 }}>
-                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>Before edit</Typography>
-                        <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#fff7ed', border: '1px solid #fed7aa', maxHeight: 240, overflow: 'auto' }}>
-                          <FormattedText text={formatAIResponse(previousAtsAnalysis)} />
-                        </Box>
+                    {previousAtsAnalysis ? (
+                      <Grid container spacing={2}>
+                        <Grid size={{ xs: 12, md: 6 }}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>Before edit</Typography>
+                          <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#fff7ed', border: '1px solid #fed7aa', maxHeight: 240, overflow: 'auto' }}>
+                            <FormattedText text={formatAIResponse(previousAtsAnalysis)} />
+                          </Box>
+                        </Grid>
+                        <Grid size={{ xs: 12, md: 6 }}>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>After edit</Typography>
+                          <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#ecfeff', border: '1px solid #a5f3fc', maxHeight: 240, overflow: 'auto' }}>
+                            <FormattedText text={formatAIResponse(result.data.ats_score.score_analysis)} />
+                          </Box>
+                        </Grid>
                       </Grid>
-                      <Grid size={{ xs: 12, md: 6 }}>
-                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>After edit</Typography>
-                        <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#ecfeff', border: '1px solid #a5f3fc', maxHeight: 240, overflow: 'auto' }}>
-                          <FormattedText text={formatAIResponse(result.data.ats_score.score_analysis)} />
-                        </Box>
-                      </Grid>
-                    </Grid>
+                    ) : (
+                      <Box sx={{ p: 2, borderRadius: 2, bgcolor: '#ecfeff', border: '1px solid #a5f3fc' }}>
+                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>Current ATS analysis</Typography>
+                        <FormattedText text={formatAIResponse(result.data.ats_score.score_analysis)} />
+                      </Box>
+                    )}
                   </Paper>
                 )}
 
@@ -1643,6 +1686,9 @@ ${(data.certifications || []).filter(Boolean).length ? `
                 {/* ── ETHICAL: Bullet Rewrites with Accept/Reject */}
                 {rewrites.length > 0 && (
                   <Paper elevation={1} sx={{ p: { xs: 3, md: 4 }, borderRadius: '18px' }}>
+                    <Alert severity="info" sx={{ mb: 2, borderRadius: '10px' }}>
+                      Only the rewrites you <strong>Accept</strong> are applied in Preview & Download.
+                    </Alert>
                     <BulletRewrites rewrites={rewrites} onAcceptedChange={setAcceptedRewrites} />
                   </Paper>
                 )}
