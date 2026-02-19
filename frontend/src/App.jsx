@@ -22,45 +22,95 @@ import {
 // ─────────────────────────────────────────────
 // Theme — warm professional, NOT purple gradient cliché
 // ─────────────────────────────────────────────
+// ── Google Fonts: Sora (display) + DM Sans (body)
+if (typeof document !== 'undefined') {
+  const fontLink = document.createElement('link')
+  fontLink.rel = 'stylesheet'
+  fontLink.href = 'https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap'
+  document.head.appendChild(fontLink)
+}
+
 const theme = createTheme({
   palette: {
     mode: 'light',
-    primary:    { main: '#2563eb', light: '#60a5fa', dark: '#1d4ed8' },
-    secondary:  { main: '#0891b2', light: '#22d3ee', dark: '#0e7490' },
-    success:    { main: '#16a34a', light: '#4ade80', dark: '#15803d' },
-    warning:    { main: '#d97706', light: '#fbbf24', dark: '#b45309' },
-    error:      { main: '#dc2626', light: '#f87171', dark: '#b91c1c' },
-    background: { default: '#f0f4f8', paper: '#ffffff' },
-    text:       { primary: '#0f172a', secondary: '#475569' },
+    primary:    { main: '#4f46e5', light: '#818cf8', dark: '#3730a3' },
+    secondary:  { main: '#06b6d4', light: '#67e8f9', dark: '#0891b2' },
+    success:    { main: '#10b981', light: '#6ee7b7', dark: '#059669' },
+    warning:    { main: '#f59e0b', light: '#fcd34d', dark: '#d97706' },
+    error:      { main: '#ef4444', light: '#fca5a5', dark: '#dc2626' },
+    background: { default: '#f4f5fb', paper: '#ffffff' },
+    text:       { primary: '#0d0f1a', secondary: '#5a6278' },
   },
   typography: {
-    fontFamily: '"DM Sans", "Segoe UI", system-ui, sans-serif',
-    h3: { fontWeight: 800, letterSpacing: '-0.03em' },
-    h4: { fontWeight: 700, letterSpacing: '-0.02em' },
-    h5: { fontWeight: 700 },
-    h6: { fontWeight: 600 },
-    button: { fontWeight: 600, textTransform: 'none' },
+    fontFamily: '"DM Sans", system-ui, sans-serif',
+    h3: { fontFamily: '"Sora", sans-serif', fontWeight: 800, letterSpacing: '-0.04em' },
+    h4: { fontFamily: '"Sora", sans-serif', fontWeight: 700, letterSpacing: '-0.03em' },
+    h5: { fontFamily: '"Sora", sans-serif', fontWeight: 700, letterSpacing: '-0.02em' },
+    h6: { fontFamily: '"Sora", sans-serif', fontWeight: 600 },
+    button: { fontWeight: 600, textTransform: 'none', letterSpacing: '0.01em' },
   },
-  shape: { borderRadius: 14 },
+  shape: { borderRadius: 16 },
   components: {
     MuiButton: {
       styleOverrides: {
-        root: { borderRadius: 10, textTransform: 'none', fontWeight: 600 },
+        root: {
+          borderRadius: 12,
+          textTransform: 'none',
+          fontWeight: 600,
+          transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)',
+        },
         containedPrimary: {
-          background: 'linear-gradient(135deg, #2563eb, #0891b2)',
-          '&:hover': { background: 'linear-gradient(135deg, #1d4ed8, #0e7490)' }
+          background: 'linear-gradient(135deg, #4f46e5 0%, #06b6d4 100%)',
+          boxShadow: '0 4px 14px rgba(79,70,229,0.3)',
+          '&:hover': {
+            background: 'linear-gradient(135deg, #3730a3 0%, #0891b2 100%)',
+            boxShadow: '0 6px 20px rgba(79,70,229,0.4)',
+            transform: 'translateY(-1px)',
+          },
+          '&:active': { transform: 'translateY(0)' },
+        },
+        outlined: {
+          borderWidth: '1.5px',
+          '&:hover': { borderWidth: '1.5px', transform: 'translateY(-1px)' },
+        },
+      }
+    },
+    MuiCard: {
+      styleOverrides: {
+        root: {
+          borderRadius: 20,
+          border: '1px solid rgba(79,70,229,0.08)',
+          boxShadow: '0 4px 24px rgba(79,70,229,0.07), 0 1px 4px rgba(0,0,0,0.04)',
         }
       }
     },
-    MuiCard:   { styleOverrides: { root: { borderRadius: 18 } } },
-    MuiPaper:  { styleOverrides: { root: { borderRadius: 18 } } },
+    MuiPaper: {
+      styleOverrides: {
+        root: { borderRadius: 20 },
+        outlined: { border: '1.5px solid rgba(79,70,229,0.1)' }
+      }
+    },
     MuiTextField: {
       styleOverrides: {
         root: {
-          '& .MuiOutlinedInput-root': { borderRadius: 10, fontSize: '1rem' },
+          '& .MuiOutlinedInput-root': {
+            borderRadius: 12,
+            fontSize: '1rem',
+            transition: 'box-shadow 0.2s',
+            '&.Mui-focused': { boxShadow: '0 0 0 3px rgba(79,70,229,0.12)' },
+          },
           '& .MuiInputLabel-root': { fontSize: '1rem' },
         }
       }
+    },
+    MuiChip: {
+      styleOverrides: { root: { fontWeight: 600 } }
+    },
+    MuiAlert: {
+      styleOverrides: { root: { borderRadius: 14 } }
+    },
+    MuiLinearProgress: {
+      styleOverrides: { root: { borderRadius: 99 } }
     },
   },
 })
@@ -799,53 +849,98 @@ function ResumeBuildPanel({ rewrites, skillTokens, gapLines, aiSummary, gapsText
   ]
 
   return (
-    <Paper elevation={1} sx={{ borderRadius: '18px', overflow: 'hidden', border: '1.5px solid', borderColor: alpha(theme.palette.primary.main, 0.15) }}>
+    <Paper elevation={0} sx={{
+      borderRadius: '24px',
+      overflow: 'hidden',
+      border: '1.5px solid rgba(79,70,229,0.12)',
+      boxShadow: '0 8px 32px rgba(79,70,229,0.07), 0 1px 4px rgba(0,0,0,0.04)',
+    }}>
 
       {/* ── Real ATS score bar */}
       {currentAtsScore && (
-        <Box sx={{ px: { xs: 2.5, md: 3.5 }, py: 2, background: 'linear-gradient(135deg, #0f172a, #1e3a5f)', color: 'white' }}>
+        <Box sx={{
+          px: { xs: 2.5, md: 3.5 }, py: 2,
+          background: 'linear-gradient(135deg, #0d0f1e 0%, #1a1060 60%, #0c3055 100%)',
+          color: 'white',
+          position: 'relative', overflow: 'hidden',
+          '&::after': {
+            content: '""', position: 'absolute',
+            top: '-50%', right: '-5%',
+            width: '40%', height: '200%',
+            background: 'radial-gradient(ellipse, rgba(79,70,229,0.2) 0%, transparent 70%)',
+            borderRadius: '50%', pointerEvents: 'none',
+          }
+        }}>
           <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1.5}>
             <Stack direction="row" alignItems="center" spacing={1.5}>
-              <Psychology sx={{ fontSize: 20, color: '#fbbf24' }} />
+              <Psychology sx={{ fontSize: 20, color: '#a5b4fc' }} />
               <Box>
-                <Typography variant="body2" fontWeight={700}>Current ATS Score</Typography>
-                <Typography variant="caption" sx={{ opacity: 0.6 }}>Re-analyze after edits to see your new score</Typography>
+                <Typography variant="body2" fontWeight={700} sx={{ fontFamily: '"Sora", sans-serif' }}>Current ATS Score</Typography>
+                <Typography variant="caption" sx={{ opacity: 0.5, fontSize: '0.72rem' }}>Re-analyze after edits to see your new score</Typography>
               </Box>
             </Stack>
-            <Stack direction="row" alignItems="center" spacing={1.5}>
-              <Typography variant="h4" fontWeight={800} sx={{ color: currentAtsScore >= 70 ? '#4ade80' : currentAtsScore >= 50 ? '#fbbf24' : '#f87171' }}>
-                {currentAtsScore}<Typography component="span" variant="body2" sx={{ opacity: 0.6 }}>/100</Typography>
-              </Typography>
-            </Stack>
+            <Typography sx={{
+              fontFamily: '"Sora", sans-serif',
+              fontSize: '1.6rem',
+              fontWeight: 800,
+              color: currentAtsScore >= 70 ? '#6ee7b7' : currentAtsScore >= 50 ? '#fcd34d' : '#fca5a5',
+              lineHeight: 1,
+            }}>
+              {currentAtsScore}<Typography component="span" sx={{ fontSize: '0.85rem', opacity: 0.5, fontWeight: 400 }}>/100</Typography>
+            </Typography>
           </Stack>
-          <LinearProgress variant="determinate" value={currentAtsScore}
-            sx={{ mt: 1.5, height: 6, borderRadius: 3, bgcolor: 'rgba(255,255,255,0.15)',
-              '& .MuiLinearProgress-bar': {
-                bgcolor: currentAtsScore >= 70 ? '#4ade80' : currentAtsScore >= 50 ? '#fbbf24' : '#f87171',
-                borderRadius: 3
-              }
+          <Box sx={{ mt: 1.5, height: 4, borderRadius: 99, bgcolor: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+            <Box sx={{
+              height: '100%',
+              width: `${currentAtsScore}%`,
+              borderRadius: 99,
+              bgcolor: currentAtsScore >= 70 ? '#6ee7b7' : currentAtsScore >= 50 ? '#fcd34d' : '#fca5a5',
+              boxShadow: `0 0 8px ${currentAtsScore >= 70 ? '#6ee7b7' : currentAtsScore >= 50 ? '#fcd34d' : '#fca5a5'}80`,
             }} />
+          </Box>
         </Box>
       )}
 
-      {/* ── Tab bar */}
-      <Box sx={{ borderBottom: '1px solid', borderColor: 'divider', bgcolor: '#f8fafc', overflowX: 'auto' }}>
-        <Tabs value={tab} onChange={(_, v) => setTab(v)}
-          variant="scrollable" scrollButtons="auto"
-          sx={{ '& .MuiTab-root': { fontWeight: 700, fontSize: { xs: '0.75rem', md: '0.85rem' }, py: 1.5, minWidth: 'auto', px: { xs: 1.5, md: 2.5 } } }}>
+      {/* ── Tab bar — pill style */}
+      <Box sx={{ px: { xs: 2, md: 3 }, py: 1.5, bgcolor: '#f8f8fc', borderBottom: '1px solid rgba(79,70,229,0.07)', overflowX: 'auto' }}>
+        <Stack direction="row" spacing={0.5} sx={{ minWidth: 'max-content' }}>
           {tabs.map((t, i) => (
-            <Tab key={i} label={
-              <Stack direction="row" alignItems="center" spacing={0.75}>
-                <span>{t.label}</span>
-                {t.count > 0 && (
-                  <Chip label={t.count} size="small"
-                    color={i === 0 ? 'warning' : i === 4 && t.count > 0 ? 'success' : 'default'}
-                    sx={{ height: 18, fontSize: '0.68rem', fontWeight: 700, '& .MuiChip-label': { px: 0.75 } }} />
-                )}
-              </Stack>
-            } />
+            <Box key={i}
+              onClick={() => setTab(i)}
+              sx={{
+                px: { xs: 1.5, md: 2 }, py: 0.75,
+                borderRadius: '99px',
+                cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 0.75,
+                fontWeight: 600,
+                fontSize: { xs: '0.78rem', md: '0.85rem' },
+                fontFamily: '"DM Sans", sans-serif',
+                transition: 'all 0.18s',
+                bgcolor: tab === i ? 'white' : 'transparent',
+                color: tab === i ? '#4f46e5' : '#5a6278',
+                boxShadow: tab === i ? '0 2px 8px rgba(79,70,229,0.12), 0 0 0 1.5px rgba(79,70,229,0.15)' : 'none',
+                '&:hover': { color: '#4f46e5', bgcolor: tab === i ? 'white' : 'rgba(79,70,229,0.04)' },
+              }}>
+              <span>{t.label}</span>
+              {t.count > 0 && (
+                <Box sx={{
+                  px: 0.75, height: 18,
+                  borderRadius: '99px',
+                  bgcolor: tab === i
+                    ? (i === 0 ? '#f59e0b' : i === 4 ? '#10b981' : '#4f46e5')
+                    : (i === 0 ? '#fcd34d' : '#e0e7ff'),
+                  color: tab === i ? 'white' : (i === 0 ? '#78350f' : '#4f46e5'),
+                  fontSize: '0.68rem',
+                  fontWeight: 700,
+                  display: 'flex', alignItems: 'center',
+                  lineHeight: 1,
+                }}>
+                  {t.count}
+                </Box>
+              )}
+            </Box>
           ))}
-        </Tabs>
+        </Stack>
       </Box>
 
       <Box sx={{ p: { xs: 2.5, md: 3.5 } }}>
@@ -860,16 +955,25 @@ function ResumeBuildPanel({ rewrites, skillTokens, gapLines, aiSummary, gapsText
             {gapLines.length > 0 ? (
               <Stack spacing={1.5}>
                 {gapLines.map((gap, i) => (
-                  <Paper key={i} variant="outlined" sx={{
-                    p: 2, borderRadius: '12px',
-                    borderColor: alpha(theme.palette.warning.main, 0.4),
-                    bgcolor: '#fffbeb'
+                  <Box key={i} sx={{
+                    p: 2, borderRadius: '14px',
+                    border: '1.5px solid rgba(245,158,11,0.2)',
+                    bgcolor: 'rgba(245,158,11,0.03)',
+                    display: 'flex', gap: 1.5, alignItems: 'flex-start',
+                    transition: 'all 0.15s',
+                    '&:hover': { bgcolor: 'rgba(245,158,11,0.06)', borderColor: 'rgba(245,158,11,0.35)' },
                   }}>
-                    <Stack direction="row" spacing={1.5} alignItems="flex-start">
-                      <Warning sx={{ color: 'warning.main', fontSize: 20, mt: 0.25, flexShrink: 0 }} />
-                      <Typography variant="body2" sx={{ lineHeight: 1.7 }}>{gap}</Typography>
-                    </Stack>
-                  </Paper>
+                    <Box sx={{
+                      flexShrink: 0, mt: 0.1,
+                      width: 22, height: 22,
+                      borderRadius: '6px',
+                      bgcolor: 'rgba(245,158,11,0.12)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      <Warning sx={{ color: '#f59e0b', fontSize: 14 }} />
+                    </Box>
+                    <Typography variant="body2" sx={{ lineHeight: 1.7, color: 'text.primary' }}>{gap}</Typography>
+                  </Box>
                 ))}
               </Stack>
             ) : (
@@ -1704,30 +1808,88 @@ ${(data.certifications || []).filter(Boolean).length ? `
           parsedData={parsedResumeRef.current} onSave={handleWizardSave} />
       )}
 
-      <Box sx={{ bgcolor: 'background.default', minHeight: '100vh', pb: 10 }}>
+      <Box sx={{
+        bgcolor: '#f4f5fb',
+        minHeight: '100vh',
+        pb: 10,
+        backgroundImage: 'radial-gradient(rgba(79,70,229,0.04) 1.5px, transparent 1.5px)',
+        backgroundSize: '32px 32px',
+      }}>
 
         {/* ── Header */}
         <Box sx={{
-          background: 'linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #0891b2 100%)',
-          color: 'white', py: { xs: 5, md: 9 }, mb: { xs: 4, md: 6 },
-          position: 'relative', overflow: 'hidden'
+          background: 'linear-gradient(135deg, #0d0f1e 0%, #1a1060 40%, #0c4a6e 100%)',
+          color: 'white',
+          py: { xs: 6, md: 10 },
+          mb: { xs: 4, md: 6 },
+          position: 'relative',
+          overflow: 'hidden',
         }}>
-          {/* decorative circles */}
-          <Box sx={{ position: 'absolute', top: -60, right: -60, width: 300, height: 300, borderRadius: '50%', bgcolor: 'rgba(37,99,235,0.15)' }} />
-          <Box sx={{ position: 'absolute', bottom: -40, left: -40, width: 200, height: 200, borderRadius: '50%', bgcolor: 'rgba(8,145,178,0.12)' }} />
+          {/* Mesh blobs */}
+          <Box sx={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none' }}>
+            <Box sx={{ position: 'absolute', top: '-20%', right: '-10%', width: '55%', height: '140%',
+              background: 'radial-gradient(ellipse at center, rgba(79,70,229,0.35) 0%, transparent 70%)',
+              borderRadius: '50%' }} />
+            <Box sx={{ position: 'absolute', bottom: '-30%', left: '-5%', width: '45%', height: '120%',
+              background: 'radial-gradient(ellipse at center, rgba(6,182,212,0.25) 0%, transparent 70%)',
+              borderRadius: '50%' }} />
+            {/* Subtle dot grid */}
+            <Box sx={{ position: 'absolute', inset: 0,
+              backgroundImage: 'radial-gradient(rgba(255,255,255,0.07) 1px, transparent 1px)',
+              backgroundSize: '28px 28px' }} />
+          </Box>
 
           <Container maxWidth="lg" sx={{ position: 'relative' }}>
-            <Stack direction={{ xs: 'column', md: 'row' }} spacing={{ xs: 2.5, md: 4 }} alignItems={{ xs: 'flex-start', md: 'center' }}>
-              <Box sx={{ bgcolor: 'rgba(255,255,255,0.12)', borderRadius: '18px', p: { xs: 2, md: 2.5 }, backdropFilter: 'blur(12px)', border: '1px solid rgba(255,255,255,0.2)' }}>
-                <AutoAwesome sx={{ fontSize: { xs: 40, md: 52 } }} />
+            <Stack direction={{ xs: 'column', md: 'row' }} spacing={{ xs: 3, md: 5 }} alignItems={{ xs: 'flex-start', md: 'center' }}>
+              {/* Icon badge */}
+              <Box sx={{
+                bgcolor: 'rgba(255,255,255,0.08)',
+                borderRadius: '22px',
+                p: { xs: 2, md: 2.5 },
+                backdropFilter: 'blur(16px)',
+                border: '1px solid rgba(255,255,255,0.15)',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                flexShrink: 0,
+              }}>
+                <AutoAwesome sx={{ fontSize: { xs: 40, md: 54 }, color: '#a5b4fc' }} />
               </Box>
+
               <Box>
-                <Typography component="h1" sx={{ fontSize: { xs: '2rem', md: '2.75rem' }, fontWeight: 800, letterSpacing: '-0.03em', lineHeight: 1.1, mb: 1 }}>
+                <Typography component="h1" sx={{
+                  fontFamily: '"Sora", sans-serif',
+                  fontSize: { xs: '2.1rem', md: '3rem' },
+                  fontWeight: 800,
+                  letterSpacing: '-0.04em',
+                  lineHeight: 1.05,
+                  mb: 1.5,
+                  background: 'linear-gradient(120deg, #ffffff 30%, #a5b4fc 70%, #67e8f9 100%)',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                }}>
                   AI Resume Optimizer
                 </Typography>
-                <Typography sx={{ opacity: 0.8, fontSize: { xs: '1rem', md: '1.15rem' } }}>
-                  Honest insights • Ethical suggestions • Interview-ready results
+                <Typography sx={{ opacity: 0.7, fontSize: { xs: '0.95rem', md: '1.1rem' }, fontWeight: 400, letterSpacing: '0.01em' }}>
+                  Honest insights &nbsp;·&nbsp; Ethical suggestions &nbsp;·&nbsp; Interview-ready results
                 </Typography>
+                {/* Trust pills */}
+                <Stack direction="row" spacing={1} mt={2.5} flexWrap="wrap" sx={{ gap: 1 }}>
+                  {['🔒 Private', '⚡ Real-time', '🎯 ATS-optimized'].map(label => (
+                    <Box key={label} sx={{
+                      px: 1.5, py: 0.5,
+                      borderRadius: '99px',
+                      bgcolor: 'rgba(255,255,255,0.1)',
+                      border: '1px solid rgba(255,255,255,0.15)',
+                      backdropFilter: 'blur(8px)',
+                      fontSize: '0.8rem',
+                      fontWeight: 600,
+                      letterSpacing: '0.01em',
+                      color: 'rgba(255,255,255,0.85)',
+                    }}>
+                      {label}
+                    </Box>
+                  ))}
+                </Stack>
               </Box>
             </Stack>
           </Container>
@@ -1736,9 +1898,18 @@ ${(data.certifications || []).filter(Boolean).length ? `
         <Container maxWidth="lg" sx={{ px: { xs: 2, md: 3 } }}>
 
           {/* Privacy */}
-          <Alert icon={<Lock />} severity="info" sx={{ mb: 3, borderRadius: '14px', fontSize: { xs: '0.9rem', md: '1rem' } }}>
-            🔒 <strong>Your data is secure.</strong> We never store your resume. All processing is real-time.
-          </Alert>
+          <Box sx={{
+            mb: 3, px: 2.5, py: 1.5,
+            borderRadius: '14px',
+            bgcolor: 'rgba(79,70,229,0.04)',
+            border: '1.5px solid rgba(79,70,229,0.1)',
+            display: 'flex', alignItems: 'center', gap: 1.5,
+          }}>
+            <Lock sx={{ color: 'primary.main', fontSize: 20, flexShrink: 0 }} />
+            <Typography variant="body2" color="text.secondary" sx={{ fontSize: { xs: '0.88rem', md: '0.95rem' } }}>
+              <strong style={{ color: '#4f46e5' }}>Your data is secure.</strong> We never store your resume. All processing is real-time and ephemeral.
+            </Typography>
+          </Box>
 
           {/* Session badge */}
           {resumeUpdated && (
@@ -1749,7 +1920,22 @@ ${(data.certifications || []).filter(Boolean).length ? `
           )}
 
           {/* ── Upload card */}
-          <Paper elevation={0} sx={{ p: { xs: 3, md: 5 }, mb: 4, border: '1.5px solid', borderColor: 'divider' }}>
+          <Paper elevation={0} sx={{
+            p: { xs: 3, md: 5 },
+            mb: 4,
+            border: '1.5px solid rgba(79,70,229,0.1)',
+            boxShadow: '0 8px 32px rgba(79,70,229,0.06), 0 1px 4px rgba(0,0,0,0.04)',
+            position: 'relative',
+            overflow: 'hidden',
+            '&::before': {
+              content: '""',
+              position: 'absolute',
+              top: 0, left: 0, right: 0,
+              height: '3px',
+              background: 'linear-gradient(90deg, #4f46e5, #06b6d4)',
+              borderRadius: '20px 20px 0 0',
+            }
+          }}>
             <form onSubmit={handleSubmit}>
 
               <Typography variant="h5" gutterBottom sx={{ mb: 3, display: 'flex', alignItems: 'center', gap: 1.5, fontWeight: 700 }}>
@@ -1831,18 +2017,48 @@ ${(data.certifications || []).filter(Boolean).length ? `
               <Stack spacing={3}>
 
                 {/* Success banner */}
-                <Paper sx={{ p: { xs: 2.5, md: 3.5 }, background: 'linear-gradient(135deg, #16a34a, #0891b2)', color: 'white', borderRadius: '18px' }}>
+                <Paper sx={{
+                  p: { xs: 2.5, md: 3.5 },
+                  background: 'linear-gradient(135deg, #064e3b 0%, #065f46 40%, #0c4a6e 100%)',
+                  color: 'white',
+                  borderRadius: '20px',
+                  position: 'relative',
+                  overflow: 'hidden',
+                  border: 'none',
+                  '&::after': {
+                    content: '""',
+                    position: 'absolute',
+                    top: '-50%', right: '-10%',
+                    width: '50%', height: '200%',
+                    background: 'radial-gradient(ellipse, rgba(16,185,129,0.2) 0%, transparent 70%)',
+                    borderRadius: '50%',
+                    pointerEvents: 'none',
+                  }
+                }}>
                   <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={2}>
                     <Stack direction="row" alignItems="center" spacing={2}>
-                      <CheckCircle sx={{ fontSize: { xs: 36, md: 44 } }} />
+                      <Box sx={{
+                        bgcolor: 'rgba(255,255,255,0.12)',
+                        borderRadius: '14px',
+                        p: 1.25,
+                        display: 'flex',
+                        border: '1px solid rgba(255,255,255,0.15)',
+                      }}>
+                        <CheckCircle sx={{ fontSize: { xs: 28, md: 36 }, color: '#6ee7b7' }} />
+                      </Box>
                       <Box>
-                        <Typography variant="h5" fontWeight={800}>Analysis Complete! 🎉</Typography>
-                        <Typography variant="body2" sx={{ opacity: 0.9 }}>
+                        <Typography variant="h5" fontWeight={800} sx={{ fontFamily: '"Sora", sans-serif', letterSpacing: '-0.02em' }}>
+                          Analysis Complete! 🎉
+                        </Typography>
+                        <Typography variant="body2" sx={{ opacity: 0.8 }}>
                           {resumeUpdated ? 'Based on your updated resume' : 'Review insights below'}
                         </Typography>
                       </Box>
                     </Stack>
-                    {resumeUpdated && <Chip label="✓ Updated resume used" sx={{ bgcolor: 'rgba(255,255,255,0.2)', color: 'white', fontWeight: 700 }} />}
+                    {resumeUpdated && (
+                      <Chip label="✓ Updated resume used"
+                        sx={{ bgcolor: 'rgba(255,255,255,0.15)', color: 'white', fontWeight: 700, border: '1px solid rgba(255,255,255,0.2)' }} />
+                    )}
                   </Stack>
                 </Paper>
 
@@ -1888,69 +2104,133 @@ ${(data.certifications || []).filter(Boolean).length ? `
                   const scoreColor = currentScore >= 70 ? '#4ade80' : currentScore >= 50 ? '#fbbf24' : '#f87171'
 
                   return (
-                    <Card elevation={3} sx={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%)', color: 'white', borderRadius: '18px' }}>
-                      <CardContent sx={{ p: { xs: 3, md: 4 } }}>
+                    <Card elevation={0} sx={{
+                      background: 'linear-gradient(145deg, #0d0f1e 0%, #1a1060 50%, #0c3055 100%)',
+                      color: 'white',
+                      borderRadius: '24px',
+                      border: '1px solid rgba(165,180,252,0.15)',
+                      overflow: 'hidden',
+                      position: 'relative',
+                      '&::before': {
+                        content: '""',
+                        position: 'absolute',
+                        top: 0, left: 0, right: 0, bottom: 0,
+                        backgroundImage: 'radial-gradient(rgba(165,180,252,0.04) 1px, transparent 1px)',
+                        backgroundSize: '24px 24px',
+                        pointerEvents: 'none',
+                      }
+                    }}>
+                      <CardContent sx={{ p: { xs: 3, md: 4 }, position: 'relative' }}>
 
                         {/* Header row */}
                         <Stack direction="row" alignItems="center" justifyContent="space-between" mb={3} flexWrap="wrap" gap={2}>
                           <Stack direction="row" alignItems="center" spacing={2}>
-                            <Psychology sx={{ fontSize: 32 }} />
+                            <Box sx={{
+                              bgcolor: 'rgba(165,180,252,0.12)',
+                              borderRadius: '14px',
+                              p: 1.25,
+                              border: '1px solid rgba(165,180,252,0.2)',
+                              display: 'flex',
+                            }}>
+                              <Psychology sx={{ fontSize: 28, color: '#a5b4fc' }} />
+                            </Box>
                             <Box>
-                              <Typography variant="h5" fontWeight={800}>ATS Score</Typography>
-                              <Typography variant="caption" sx={{ opacity: 0.6 }}>How well your resume matches this job</Typography>
+                              <Typography variant="h5" fontWeight={800} sx={{ fontFamily: '"Sora", sans-serif', letterSpacing: '-0.02em' }}>
+                                ATS Score
+                              </Typography>
+                              <Typography variant="caption" sx={{ opacity: 0.5, letterSpacing: '0.03em' }}>
+                                How well your resume matches this job
+                              </Typography>
                             </Box>
                           </Stack>
-                          {/* Score display — before/after if re-analyzed, else just current */}
+
+                          {/* Score display */}
                           <Stack direction="row" alignItems="center" spacing={2}>
                             {diff !== null && (
                               <>
                                 <Box textAlign="center">
-                                  <Typography variant="caption" sx={{ opacity: 0.55, display: 'block' }}>BEFORE</Typography>
-                                  <Typography variant="h4" fontWeight={800} sx={{ opacity: 0.7 }}>{originalAtsScore}</Typography>
+                                  <Typography variant="caption" sx={{ opacity: 0.45, display: 'block', letterSpacing: '0.08em', fontSize: '0.7rem' }}>BEFORE</Typography>
+                                  <Typography variant="h4" fontWeight={800} sx={{ opacity: 0.55, fontFamily: '"Sora", sans-serif' }}>{originalAtsScore}</Typography>
                                 </Box>
-                                <Typography variant="h4" sx={{ opacity: 0.3 }}>→</Typography>
+                                <Typography variant="h4" sx={{ opacity: 0.25 }}>→</Typography>
                               </>
                             )}
-                            <Box textAlign="center">
-                              {diff !== null && <Typography variant="caption" sx={{ opacity: 0.55, display: 'block' }}>NOW</Typography>}
-                              <Typography variant="h2" fontWeight={900} sx={{ color: scoreColor, lineHeight: 1 }}>
-                                {currentScore}
-                                <Typography component="span" variant="h5" sx={{ opacity: 0.5, fontWeight: 400 }}>/100</Typography>
-                              </Typography>
+                            {/* Glowing score ring */}
+                            <Box sx={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              <Box sx={{
+                                position: 'absolute',
+                                width: 88, height: 88,
+                                borderRadius: '50%',
+                                background: `radial-gradient(circle, ${scoreColor}30 0%, transparent 70%)`,
+                                filter: 'blur(8px)',
+                              }} />
+                              <Box sx={{
+                                position: 'relative',
+                                width: 80, height: 80,
+                                borderRadius: '50%',
+                                border: `3px solid ${scoreColor}60`,
+                                boxShadow: `0 0 20px ${scoreColor}40`,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                flexDirection: 'column',
+                              }}>
+                                <Typography sx={{
+                                  fontFamily: '"Sora", sans-serif',
+                                  fontSize: '1.5rem',
+                                  fontWeight: 900,
+                                  color: scoreColor,
+                                  lineHeight: 1,
+                                }}>
+                                  {currentScore}
+                                </Typography>
+                                <Typography sx={{ fontSize: '0.6rem', opacity: 0.45, fontWeight: 500 }}>/100</Typography>
+                              </Box>
                             </Box>
                             {diff !== null && (
                               <Chip label={diff > 0 ? `+${diff} 🚀` : diff < 0 ? `${diff} ⚠️` : '±0'}
-                                sx={{ bgcolor: diff > 0 ? '#16a34a' : diff < 0 ? '#dc2626' : '#475569', color: 'white', fontWeight: 800, fontSize: '1rem' }} />
+                                sx={{ bgcolor: diff > 0 ? '#10b981' : diff < 0 ? '#ef4444' : '#475569', color: 'white', fontWeight: 800, fontSize: '1rem' }} />
                             )}
                           </Stack>
                         </Stack>
 
                         {/* Score bar */}
                         <LinearProgress variant="determinate" value={currentScore || 0}
-                          sx={{ mb: 3, height: 8, borderRadius: 4, bgcolor: 'rgba(255,255,255,0.12)',
-                            '& .MuiLinearProgress-bar': { bgcolor: scoreColor, borderRadius: 4 } }} />
+                          sx={{ mb: 3, height: 6, borderRadius: 99, bgcolor: 'rgba(255,255,255,0.08)',
+                            '& .MuiLinearProgress-bar': { bgcolor: scoreColor, borderRadius: 99 } }} />
 
                         {/* Breakdown bars */}
                         {breakdown.length > 0 && (
-                          <Paper elevation={0} sx={{ p: 2.5, borderRadius: '14px', bgcolor: 'rgba(255,255,255,0.07)', mb: 2.5 }}>
-                            <Typography variant="caption" fontWeight={700} sx={{ opacity: 0.7, textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', mb: 2 }}>
+                          <Box sx={{ p: 2.5, borderRadius: '16px', bgcolor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.07)', mb: 2.5 }}>
+                            <Typography variant="caption" fontWeight={700} sx={{ opacity: 0.5, textTransform: 'uppercase', letterSpacing: '0.1em', display: 'block', mb: 2, fontSize: '0.7rem' }}>
                               Score Breakdown
                             </Typography>
-                            <Stack spacing={1.5}>
-                              {breakdown.map((b, i) => (
-                                <Box key={i}>
-                                  <Stack direction="row" justifyContent="space-between" mb={0.5}>
-                                    <Typography variant="caption" fontWeight={600}>{b.label}</Typography>
-                                    <Typography variant="caption" fontWeight={700}>{b.score}/{b.max}</Typography>
-                                  </Stack>
-                                  <LinearProgress variant="determinate" value={(b.score / b.max) * 100}
-                                    sx={{ height: 5, borderRadius: 3, bgcolor: 'rgba(255,255,255,0.12)',
-                                      '& .MuiLinearProgress-bar': { bgcolor: (b.score/b.max) >= 0.7 ? '#4ade80' : (b.score/b.max) >= 0.5 ? '#fbbf24' : '#f87171', borderRadius: 3 }
-                                    }} />
-                                </Box>
-                              ))}
+                            <Stack spacing={2}>
+                              {breakdown.map((b, i) => {
+                                const pct = (b.score / b.max) * 100
+                                const bColor = pct >= 70 ? '#6ee7b7' : pct >= 50 ? '#fcd34d' : '#fca5a5'
+                                return (
+                                  <Box key={i}>
+                                    <Stack direction="row" justifyContent="space-between" mb={0.75}>
+                                      <Typography variant="caption" fontWeight={600} sx={{ opacity: 0.8 }}>{b.label}</Typography>
+                                      <Typography variant="caption" fontWeight={700} sx={{ color: bColor }}>{b.score}/{b.max}</Typography>
+                                    </Stack>
+                                    <Box sx={{ position: 'relative', height: 5, borderRadius: 99, bgcolor: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+                                      <Box sx={{
+                                        position: 'absolute', top: 0, left: 0,
+                                        height: '100%',
+                                        width: `${pct}%`,
+                                        bgcolor: bColor,
+                                        borderRadius: 99,
+                                        boxShadow: `0 0 8px ${bColor}80`,
+                                        transition: 'width 1s cubic-bezier(0.4,0,0.2,1)',
+                                      }} />
+                                    </Box>
+                                  </Box>
+                                )
+                              })}
                             </Stack>
-                          </Paper>
+                          </Box>
                         )}
 
                         {/* Strengths + Improvements side by side */}

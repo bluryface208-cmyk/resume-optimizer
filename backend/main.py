@@ -329,11 +329,19 @@ RESUME:
 Return ALL of the following sections. Use the EXACT section headers shown. Never skip a section.
 
 ###ATS_SCORE###
-Overall ATS Score: [write a number]/100
-Breakdown: Keyword Match ([number]/40), Experience ([number]/30), Skills ([number]/20), Education ([number]/10)
+Overall ATS Score: [NUMBER]/100
+Breakdown: Keyword Match ([NUMBER]/40), Experience ([NUMBER]/30), Skills ([NUMBER]/20), Education ([NUMBER]/10)
 Top 5 Missing Keywords: [list them]
-Top 3 Strengths: [list them]
-Top 3 Improvements: [list them]
+Top 3 Strengths:
+- [strength 1]
+- [strength 2]
+- [strength 3]
+Top 3 Improvements:
+- [improvement 1]
+- [improvement 2]
+- [improvement 3]
+
+IMPORTANT: The Breakdown line MUST use EXACTLY this format with numbers in parentheses like: Keyword Match (24/40), Experience (18/30), Skills (12/20), Education (8/10)
 
 ###CRITICAL_GAPS###
 List 3-5 specific gaps — skills, experience, or keywords the JD requires that this resume lacks or undershows. Be concrete, not generic.
@@ -351,6 +359,7 @@ One per line, name only, no explanation:
 
 ###SUMMARY###
 Write a 2-3 sentence professional summary tailored to this exact JD and this candidate's background.
+IMPORTANT: Write in FIRST PERSON. Do NOT mention the candidate's name. Start with "I am..." or "Experienced [role]..." or similar. Never say "[Name] is..." or "[Name] brings...".
 
 ###INTERVIEW_PREP###
 Technical Questions (5 specific to this JD):
