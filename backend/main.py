@@ -316,61 +316,52 @@ Be concise and clear."""
     analysis = analyze_with_groq(prompt, max_tokens=2000, prefer_large=False)
     return {"analysis": analysis, "success": True}
 
-def calculate_ats_score(jd_content: str, resume_content: str) -> dict:
-    prompt = f"""You are an ATS expert. Analyze and score this resume.
+def run_full_analysis(jd_content: str, resume_content: str) -> dict:
+    """Single API call covering ATS score, gaps, rewrites, skills, summary, and interview prep."""
+    prompt = f"""You are a senior technical recruiter and expert resume coach. Analyze this resume against this job description thoroughly.
 
 JOB DESCRIPTION:
-{jd_content[:2000]}
+{jd_content[:2500]}
 
 RESUME:
-{resume_content[:2000]}
+{resume_content[:3000]}
 
-Provide:
-1. **Overall ATS Score: X/100**
-2. **Breakdown:** Keyword Match (X/40), Experience (X/30), Skills (X/20), Education (X/10)
-3. **Top 5 Missing Keywords**
-4. **Top 3 Improvements**
-5. **Strengths**
+Return ALL of the following sections. Use the EXACT section headers shown. Never skip a section.
 
-Be specific."""
-    score_analysis = analyze_with_groq(prompt, max_tokens=2500, prefer_large=False)
-    return {"score_analysis": score_analysis, "success": True}
+###ATS_SCORE###
+Overall ATS Score: [write a number]/100
+Breakdown: Keyword Match ([number]/40), Experience ([number]/30), Skills ([number]/20), Education ([number]/10)
+Top 5 Missing Keywords: [list them]
+Top 3 Strengths: [list them]
+Top 3 Improvements: [list them]
 
-def generate_resume_suggestions(jd_content: str, resume_content: str) -> dict:
-    prompt = f"""Expert resume writer: Suggest improvements.
+###CRITICAL_GAPS###
+List 3-5 specific gaps — skills, experience, or keywords the JD requires that this resume lacks or undershows. Be concrete, not generic.
 
-JOB DESCRIPTION:
-{jd_content[:2000]}
+###REWRITES###
+Pick the 3-5 weakest or vaguest bullet points from the resume. Rewrite each.
+Use EXACTLY this format for each:
+Original: <copy the exact bullet text from the resume, word for word>
+Improved: <stronger version: action verb + specific metric + clear impact>
 
-RESUME:
-{resume_content[:2000]}
+###SKILLS###
+List skill/tool names from the JD missing from the resume (plausible for this candidate only).
+One per line, name only, no explanation:
+- SkillName
 
-Provide:
-1. **Critical Gaps**
-2. **Keywords to Add**
-3. **3-5 Rewritten Bullet Points** (Use STAR format with metrics)
-4. **Skills Updates**
-5. **Summary/Objective**
+###SUMMARY###
+Write a 2-3 sentence professional summary tailored to this exact JD and this candidate's background.
 
-Be specific and truthful."""
-    suggestions = analyze_with_groq(prompt, max_tokens=3000, prefer_large=False)
-    return {"suggestions": suggestions, "success": True}
+###INTERVIEW_PREP###
+Technical Questions (5 specific to this JD):
+Behavioral Questions (3):
+Questions to Ask the Interviewer (3):
+Topics to Study Before Interview (3):
 
-def generate_interview_prep(jd_content: str, resume_content: str) -> dict:
-    prompt = f"""Create interview prep.
+Be specific to THIS resume and THIS job. Never fabricate experience."""
 
-JOB: {jd_content[:1500]}
-RESUME: {resume_content[:1500]}
-
-Generate:
-1. **Technical Questions** (5)
-2. **Behavioral Questions** (3)
-3. **Questions to Ask** (3)
-4. **Topics to Study** (top 3)
-
-Be specific."""
-    prep = analyze_with_groq(prompt, max_tokens=3000, prefer_large=False)
-    return {"interview_prep": prep, "success": True}
+    response = analyze_with_groq(prompt, max_tokens=4000, prefer_large=False)
+    return {"full_analysis": response, "success": True}
 
 def generate_youtube_resources(jd_content: str) -> list:
     prompt = f"""List 5 technical topics to study for this job.
@@ -706,56 +697,57 @@ Projects: {", ".join([p.get('name', '') for p in resume_data_override.get('proje
         if not jd_content or not resume_content:
             return {"success": False, "error": "Both job description and resume are required"}
 
-        # ── Run all analyses
+        # ── Parse resume structure
         print("📊 Parsing resume...")
         resume_data = resume_data_override or parse_resume_to_structured_data(resume_content)
 
-        print("🔍 Analyzing JD...")
-        jd_analysis = analyze_job_description(jd_content)
+        # ── ONE combined AI call: ATS + gaps + rewrites + skills + summary + interview prep
+        print("🤖 Running full analysis (single API call)...")
+        full_result = run_full_analysis(jd_content, resume_content)
+        full_text = full_result.get("full_analysis", "")
 
-        print("📊 ATS score...")
-        ats_score = calculate_ats_score(jd_content, resume_content)
+        # ── Parse sections by delimiter
+        def extract_section(text, marker, next_markers):
+            start = text.find(f"###{marker}###")
+            if start == -1:
+                return ""
+            start = text.find("\n", start) + 1
+            end = len(text)
+            for nm in next_markers:
+                idx = text.find(f"###{nm}###", start)
+                if idx != -1 and idx < end:
+                    end = idx
+            return text[start:end].strip()
 
-        print("✨ Suggestions...")
-        resume_suggestions = generate_resume_suggestions(jd_content, resume_content)
+        all_markers = ["ATS_SCORE", "CRITICAL_GAPS", "REWRITES", "SKILLS", "SUMMARY", "INTERVIEW_PREP"]
+        ats_text       = extract_section(full_text, "ATS_SCORE",      all_markers[1:])
+        gaps_text      = extract_section(full_text, "CRITICAL_GAPS",  all_markers[2:])
+        rewrites_text  = extract_section(full_text, "REWRITES",       all_markers[3:])
+        skills_text    = extract_section(full_text, "SKILLS",         all_markers[4:])
+        summary_text   = extract_section(full_text, "SUMMARY",        all_markers[5:])
+        interview_text = extract_section(full_text, "INTERVIEW_PREP", [])
 
-        print("💡 Interview prep...")
-        interview_prep = generate_interview_prep(jd_content, resume_content)
+        # ── YouTube (lightweight, skip on re-runs)
+        if resume_data_override:
+            youtube_resources = []
+        else:
+            print("🎥 Resources...")
+            youtube_resources = generate_youtube_resources(jd_content)
 
-        print("🎥 Resources...")
-        youtube_resources = generate_youtube_resources(jd_content)
-
-        # ── Enhancement
-        enhancement_result = None
-        if resume_data and not resume_data_override:
-            print("🚀 Enhancing...")
-            enhancement_result = enhance_resume_data_with_ai(
-                resume_data,
-                resume_suggestions.get("suggestions", ""),
-                jd_analysis.get("analysis", "")
-            )
-
-        final_resume = (
-            enhancement_result.get("enhanced") if enhancement_result
-            else resume_data_override or resume_data
-        )
-        original_resume = (
-            enhancement_result.get("original") if enhancement_result
-            else resume_data_override or resume_data
-        )
-        changes = enhancement_result.get("changes", []) if enhancement_result else []
+        # No more enhancement call — user controls their own rewrites via accept/reject
 
         return {
             "success": True,
             "data": {
-                "jd_analysis": jd_analysis,
-                "ats_score": ats_score,
-                "resume_suggestions": resume_suggestions,
-                "interview_prep": interview_prep,
+                "ats_score":      {"score_analysis": ats_text},
+                "critical_gaps":  gaps_text,
+                "rewrites":       rewrites_text,
+                "skills":         skills_text,
+                "summary":        summary_text,
+                "interview_prep": {"interview_prep": interview_text},
                 "youtube_resources": youtube_resources,
-                "resume_data": final_resume,
-                "original_resume_data": original_resume,
-                "changes_made": changes
+                "resume_data":    resume_data_override or resume_data,
+                "original_resume_data": resume_data
             },
             "message": "Analysis complete!"
         }

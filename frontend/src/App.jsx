@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import axios from 'axios'
 import {
   Container, Paper, Typography, Button, TextField, Box, Tabs, Tab,
@@ -675,12 +675,10 @@ function GapAnalysis({ gaps }) {
   )
 }
 
-function BulletRewrites({ rewrites }) {
-  const [accepted, setAccepted] = useState({})
+function BulletRewrites({ rewrites, accepted, onToggle }) {
+  // accepted and onToggle are controlled from parent — state survives tab switches
   if (!rewrites || rewrites.length === 0) return null
-
-  const toggle = (i) => setAccepted(p => ({ ...p, [i]: !p[i] }))
-  const acceptedCount = Object.values(accepted).filter(Boolean).length
+  const acceptedCount = Object.values(accepted || {}).filter(Boolean).length
 
   return (
     <Box>
@@ -723,12 +721,12 @@ function BulletRewrites({ rewrites }) {
               <Stack direction="row" spacing={1.5} alignItems="center">
                 <Button size="small" variant={accepted[i] ? 'contained' : 'outlined'} color="success"
                   startIcon={accepted[i] ? <CheckCircle /> : <CheckBoxOutlineBlank />}
-                  onClick={() => toggle(i)}
+                  onClick={() => onToggle(i)}
                   sx={{ borderRadius: '8px', fontWeight: 700 }}>
                   {accepted[i] ? 'Accepted' : 'Accept'}
                 </Button>
                 {accepted[i] && (
-                  <Button size="small" variant="outlined" color="error" onClick={() => toggle(i)}
+                  <Button size="small" variant="outlined" color="error" onClick={() => onToggle(i)}
                     sx={{ borderRadius: '8px' }}>
                     Revert
                   </Button>
@@ -742,6 +740,345 @@ function BulletRewrites({ rewrites }) {
         ))}
       </Stack>
     </Box>
+  )
+}
+
+// ─────────────────────────────────────────────
+// RESUME BUILD PANEL — tabbed, interactive, no duplication
+// ─────────────────────────────────────────────
+// Fuzzy match: normalize both strings, check word overlap > 60%
+const fuzzyMatch = (a, b) => {
+  const normalize = s => s.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
+  const words = s => new Set(normalize(s).split(' ').filter(w => w.length > 2))
+  const wa = words(a), wb = words(b)
+  if (wa.size === 0 || wb.size === 0) return false
+  const intersection = [...wa].filter(w => wb.has(w)).length
+  const overlap = intersection / Math.min(wa.size, wb.size)
+  return overlap >= 0.55  // 55% of the shorter string's meaningful words match
+}
+
+function ResumeBuildPanel({ rewrites, skillTokens, gapLines, aiSummary, gapsText, rewritesText, skillsText, interviewText, originalResumeData, acceptedRewrites, onAcceptedRewrites, onSkillsChange, onSummaryChange, currentAtsScore }) {
+  const [tab, setTab] = useState(0)
+  const [acceptedMap, setAcceptedMap] = useState({})       // controlled state for rewrites — survives tab switches
+  const [acceptedSkillsMap, setAcceptedSkillsMap] = useState({})
+  const [summaryText, setSummaryText] = useState(aiSummary || '')
+  const [summaryEnabled, setSummaryEnabled] = useState(false)
+
+  // Controlled toggle for rewrites — state lives HERE not in BulletRewrites
+  const toggleRewrite = (i) => {
+    const next = { ...acceptedMap, [i]: !acceptedMap[i] }
+    setAcceptedMap(next)
+    if (onAcceptedRewrites) onAcceptedRewrites(rewrites.filter((_, idx) => next[idx]))
+  }
+
+  const toggleSkill = (i) => {
+    const next = { ...acceptedSkillsMap, [i]: !acceptedSkillsMap[i] }
+    setAcceptedSkillsMap(next)
+    if (onSkillsChange) onSkillsChange(skillTokens.filter((_, idx) => next[idx]))
+  }
+  const handleSummaryToggle = () => {
+    const next = !summaryEnabled
+    setSummaryEnabled(next)
+    if (onSummaryChange) onSummaryChange(next ? summaryText : null)
+  }
+  const handleSummaryEdit = (v) => {
+    setSummaryText(v)
+    if (summaryEnabled && onSummaryChange) onSummaryChange(v)
+  }
+
+  // Before/After: just use acceptedRewrites directly — they already have original + improved
+
+  const acceptedSkillCount = Object.values(acceptedSkillsMap).filter(Boolean).length
+
+  const tabs = [
+    { label: '⚠️ Critical Gaps', count: gapLines.length },
+    { label: '✏️ Rewrites', count: rewrites.length },
+    { label: '🛠 Skills', count: skillTokens.length },
+    { label: '📝 Summary', count: aiSummary ? 1 : 0 },
+    { label: '📊 Before/After', count: acceptedRewrites.length + acceptedSkillCount + (summaryEnabled ? 1 : 0) },
+  ]
+
+  return (
+    <Paper elevation={1} sx={{ borderRadius: '18px', overflow: 'hidden', border: '1.5px solid', borderColor: alpha(theme.palette.primary.main, 0.15) }}>
+
+      {/* ── Real ATS score bar */}
+      {currentAtsScore && (
+        <Box sx={{ px: { xs: 2.5, md: 3.5 }, py: 2, background: 'linear-gradient(135deg, #0f172a, #1e3a5f)', color: 'white' }}>
+          <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1.5}>
+            <Stack direction="row" alignItems="center" spacing={1.5}>
+              <Psychology sx={{ fontSize: 20, color: '#fbbf24' }} />
+              <Box>
+                <Typography variant="body2" fontWeight={700}>Current ATS Score</Typography>
+                <Typography variant="caption" sx={{ opacity: 0.6 }}>Re-analyze after edits to see your new score</Typography>
+              </Box>
+            </Stack>
+            <Stack direction="row" alignItems="center" spacing={1.5}>
+              <Typography variant="h4" fontWeight={800} sx={{ color: currentAtsScore >= 70 ? '#4ade80' : currentAtsScore >= 50 ? '#fbbf24' : '#f87171' }}>
+                {currentAtsScore}<Typography component="span" variant="body2" sx={{ opacity: 0.6 }}>/100</Typography>
+              </Typography>
+            </Stack>
+          </Stack>
+          <LinearProgress variant="determinate" value={currentAtsScore}
+            sx={{ mt: 1.5, height: 6, borderRadius: 3, bgcolor: 'rgba(255,255,255,0.15)',
+              '& .MuiLinearProgress-bar': {
+                bgcolor: currentAtsScore >= 70 ? '#4ade80' : currentAtsScore >= 50 ? '#fbbf24' : '#f87171',
+                borderRadius: 3
+              }
+            }} />
+        </Box>
+      )}
+
+      {/* ── Tab bar */}
+      <Box sx={{ borderBottom: '1px solid', borderColor: 'divider', bgcolor: '#f8fafc', overflowX: 'auto' }}>
+        <Tabs value={tab} onChange={(_, v) => setTab(v)}
+          variant="scrollable" scrollButtons="auto"
+          sx={{ '& .MuiTab-root': { fontWeight: 700, fontSize: { xs: '0.75rem', md: '0.85rem' }, py: 1.5, minWidth: 'auto', px: { xs: 1.5, md: 2.5 } } }}>
+          {tabs.map((t, i) => (
+            <Tab key={i} label={
+              <Stack direction="row" alignItems="center" spacing={0.75}>
+                <span>{t.label}</span>
+                {t.count > 0 && (
+                  <Chip label={t.count} size="small"
+                    color={i === 0 ? 'warning' : i === 4 && t.count > 0 ? 'success' : 'default'}
+                    sx={{ height: 18, fontSize: '0.68rem', fontWeight: 700, '& .MuiChip-label': { px: 0.75 } }} />
+                )}
+              </Stack>
+            } />
+          ))}
+        </Tabs>
+      </Box>
+
+      <Box sx={{ p: { xs: 2.5, md: 3.5 } }}>
+
+        {/* ── Tab 0: Critical Gaps — section-wise display */}
+        {tab === 0 && (
+          <Box>
+            <Typography variant="h6" fontWeight={700} mb={0.5}>⚠️ Critical Gaps</Typography>
+            <Typography variant="body2" color="text.secondary" mb={2.5}>
+              What this job requires that your resume doesn't clearly show.
+            </Typography>
+            {gapLines.length > 0 ? (
+              <Stack spacing={1.5}>
+                {gapLines.map((gap, i) => (
+                  <Paper key={i} variant="outlined" sx={{
+                    p: 2, borderRadius: '12px',
+                    borderColor: alpha(theme.palette.warning.main, 0.4),
+                    bgcolor: '#fffbeb'
+                  }}>
+                    <Stack direction="row" spacing={1.5} alignItems="flex-start">
+                      <Warning sx={{ color: 'warning.main', fontSize: 20, mt: 0.25, flexShrink: 0 }} />
+                      <Typography variant="body2" sx={{ lineHeight: 1.7 }}>{gap}</Typography>
+                    </Stack>
+                  </Paper>
+                ))}
+              </Stack>
+            ) : (
+              <Box textAlign="center" py={4}>
+                <CheckCircle sx={{ fontSize: 48, color: 'success.main', mb: 1 }} />
+                <Typography color="text.secondary">No critical gaps identified.</Typography>
+              </Box>
+            )}
+          </Box>
+        )}
+
+        {/* ── Tab 1: Bullet Rewrites */}
+        {tab === 1 && (
+          rewrites.length > 0
+            ? <BulletRewrites rewrites={rewrites} accepted={acceptedMap} onToggle={toggleRewrite} />
+            : <Box textAlign="center" py={5}>
+                <Typography variant="body1" color="text.secondary">No rewritable bullets found.</Typography>
+                <Typography variant="body2" color="text.secondary" mt={1}>Your bullet writing may already be strong!</Typography>
+              </Box>
+        )}
+
+        {/* ── Tab 2: Skills */}
+        {tab === 2 && (
+          <Box>
+            <Typography variant="h6" fontWeight={700} mb={0.5}>🛠 Skills to Add</Typography>
+            <Typography variant="body2" color="text.secondary" mb={2}>
+              Select only skills you genuinely have. These will be added directly to your resume's skills section.
+            </Typography>
+            <Alert severity="warning" sx={{ mb: 2.5, borderRadius: '10px', py: 0.5 }}>
+              <Typography variant="body2">
+                ⚠️ <strong>Honesty check:</strong> Only add skills you can speak to confidently in an interview. Bluffing will backfire.
+              </Typography>
+            </Alert>
+            {skillTokens.length > 0 ? (
+              <>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mb: 2 }}>
+                  {skillTokens.map((skill, i) => (
+                    <Chip
+                      key={i}
+                      label={skill}
+                      onClick={() => toggleSkill(i)}
+                      icon={acceptedSkillsMap[i] ? <CheckCircle sx={{ fontSize: '1rem !important' }} /> : undefined}
+                      variant={acceptedSkillsMap[i] ? 'filled' : 'outlined'}
+                      color={acceptedSkillsMap[i] ? 'success' : 'default'}
+                      sx={{
+                        fontWeight: 700, fontSize: '0.9rem', py: 2.5, px: 1,
+                        cursor: 'pointer', transition: 'all 0.2s',
+                        borderWidth: 1.5,
+                        '&:hover': { borderColor: 'primary.main', bgcolor: alpha(theme.palette.primary.main, 0.06) }
+                      }}
+                    />
+                  ))}
+                </Box>
+                {acceptedSkillCount > 0 && (
+                  <Alert severity="success" sx={{ borderRadius: '10px', py: 0.5 }}>
+                    <Typography variant="body2">
+                      ✅ <strong>{acceptedSkillCount} skill{acceptedSkillCount > 1 ? 's' : ''} selected</strong> — will be added to your resume's skills section on download.
+                    </Typography>
+                  </Alert>
+                )}
+              </>
+            ) : (
+              <Box textAlign="center" py={4}>
+                <Typography color="text.secondary">No skill suggestions available for this resume/JD combination.</Typography>
+              </Box>
+            )}
+          </Box>
+        )}
+
+        {/* ── Tab 3: Summary */}
+        {tab === 3 && (
+          <Box>
+            <Stack direction="row" alignItems="flex-start" justifyContent="space-between" mb={2} gap={2}>
+              <Box>
+                <Typography variant="h6" fontWeight={700}>📝 Professional Summary</Typography>
+                <Typography variant="body2" color="text.secondary">AI-drafted based on your resume + this JD. Edit freely before including.</Typography>
+              </Box>
+              <Button
+                variant={summaryEnabled ? 'contained' : 'outlined'}
+                color="success" size="small"
+                startIcon={summaryEnabled ? <CheckCircle /> : <CheckBoxOutlineBlank />}
+                onClick={handleSummaryToggle}
+                sx={{ flexShrink: 0, borderRadius: '10px', fontWeight: 700 }}
+              >
+                {summaryEnabled ? 'Included ✓' : 'Include'}
+              </Button>
+            </Stack>
+            <TextField
+              fullWidth multiline minRows={5}
+              value={summaryText}
+              onChange={e => handleSummaryEdit(e.target.value)}
+              placeholder="Edit the AI summary here..."
+              sx={{
+                '& .MuiOutlinedInput-root': {
+                  borderRadius: '12px', fontSize: '0.95rem',
+                  bgcolor: summaryEnabled ? '#f0fdf4' : '#f8fafc',
+                  transition: 'background-color 0.2s'
+                }
+              }}
+            />
+            {summaryEnabled && (
+              <Alert severity="success" sx={{ mt: 1.5, borderRadius: '10px', py: 0.5 }}>
+                ✓ This summary will appear at the top of your downloaded resume.
+              </Alert>
+            )}
+            {!aiSummary && (
+              <Box textAlign="center" py={4}>
+                <Typography color="text.secondary">No summary suggestion available.</Typography>
+              </Box>
+            )}
+          </Box>
+        )}
+
+        {/* ── Tab 4: Before / After — all changes summary */}
+        {tab === 4 && (
+          <Box>
+            <Typography variant="h6" fontWeight={700} mb={0.5}>📊 All Changes to Your Resume</Typography>
+            <Typography variant="body2" color="text.secondary" mb={2.5}>
+              Everything that will be different in your downloaded resume.
+            </Typography>
+
+            {/* Skills added */}
+            {acceptedSkillCount > 0 && (
+              <Box mb={3}>
+                <Typography variant="subtitle2" fontWeight={700} color="text.secondary"
+                  sx={{ textTransform: 'uppercase', letterSpacing: '0.06em', mb: 1 }}>🛠 Skills Added</Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                  {skillTokens.filter((_, i) => acceptedSkillsMap[i]).map((s, i) => (
+                    <Chip key={i} label={`+ ${s}`} color="success" variant="filled"
+                      sx={{ fontWeight: 700, fontSize: '0.85rem' }} />
+                  ))}
+                </Box>
+              </Box>
+            )}
+
+            {/* Summary added */}
+            {summaryEnabled && summaryText && (
+              <Box mb={3}>
+                <Typography variant="subtitle2" fontWeight={700} color="text.secondary"
+                  sx={{ textTransform: 'uppercase', letterSpacing: '0.06em', mb: 1 }}>📝 Summary Added</Typography>
+                <Paper variant="outlined" sx={{ p: 2, borderRadius: '12px', borderColor: 'success.light', bgcolor: '#f0fdf4' }}>
+                  <Typography variant="body2" sx={{ lineHeight: 1.7, color: 'success.dark', fontWeight: 500 }}>
+                    {summaryText}
+                  </Typography>
+                </Paper>
+              </Box>
+            )}
+
+            {/* Bullet rewrites — directly from what user accepted */}
+            {acceptedRewrites.length > 0 && (
+              <Box>
+                <Typography variant="subtitle2" fontWeight={700} color="text.secondary"
+                  sx={{ textTransform: 'uppercase', letterSpacing: '0.06em', mb: 1.5 }}>
+                  ✏️ Bullet Rewrites ({acceptedRewrites.length} changed)
+                </Typography>
+                <Stack spacing={1.5}>
+                  {acceptedRewrites.map((rw, i) => (
+                    <Box key={i} sx={{ borderRadius: '12px', overflow: 'hidden', border: '1px solid', borderColor: 'success.light' }}>
+                      <Grid container>
+                        <Grid size={{ xs: 12, md: 6 }} sx={{ p: 2, bgcolor: '#fff5f5', borderRight: { md: '1px solid #fee2e2' } }}>
+                          <Typography variant="caption" fontWeight={700} color="error.main"
+                            sx={{ textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', mb: 0.75 }}>
+                            ❌ Before
+                          </Typography>
+                          <Typography variant="body2" sx={{ lineHeight: 1.7, color: 'text.secondary', fontStyle: 'italic' }}>
+                            {rw.original}
+                          </Typography>
+                        </Grid>
+                        <Grid size={{ xs: 12, md: 6 }} sx={{ p: 2, bgcolor: '#f0fdf4' }}>
+                          <Typography variant="caption" fontWeight={700} color="success.dark"
+                            sx={{ textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', mb: 0.75 }}>
+                            ✅ After
+                          </Typography>
+                          <Typography variant="body2" sx={{ lineHeight: 1.7, fontWeight: 600, color: 'success.dark' }}>
+                            {rw.improved}
+                          </Typography>
+                        </Grid>
+                      </Grid>
+                    </Box>
+                  ))}
+                </Stack>
+              </Box>
+            )}
+
+            {acceptedRewrites.length === 0 && acceptedSkillCount === 0 && !summaryEnabled && (
+              <Box textAlign="center" py={5}>
+                <Typography color="text.secondary" variant="body1">No changes selected yet.</Typography>
+                <Typography color="text.secondary" variant="body2" mt={1}>
+                  Accept rewrites, select skills, or include the summary — then come back here to see everything.
+                </Typography>
+              </Box>
+            )}
+          </Box>
+        )}
+      </Box>
+
+      {/* ── Ready to download footer */}
+      {(acceptedRewrites.length > 0 || acceptedSkillCount > 0 || summaryEnabled) && (
+        <Box sx={{ px: { xs: 2.5, md: 3.5 }, py: 2, bgcolor: '#f0fdf4', borderTop: '1px solid #bbf7d0' }}>
+          <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" gap={1}>
+            <CheckCircle sx={{ color: 'success.main', fontSize: 18 }} />
+            <Typography variant="body2" fontWeight={700} color="success.dark">Ready to download:</Typography>
+            {acceptedRewrites.length > 0 && <Chip label={`${acceptedRewrites.length} rewrites`} size="small" color="success" />}
+            {acceptedSkillCount > 0 && <Chip label={`${acceptedSkillCount} skills`} size="small" color="success" />}
+            {summaryEnabled && <Chip label="summary" size="small" color="success" />}
+          </Stack>
+        </Box>
+      )}
+    </Paper>
   )
 }
 
@@ -763,10 +1100,15 @@ function App() {
   const [analyzing, setAnalyzing] = useState(false)
   const [analysisStep, setAnalysisStep] = useState(0)
   const [analysisCache, setAnalysisCache] = useState({})
+  const [originalAtsScore, setOriginalAtsScore] = useState(null)  // score before wizard edits
+  const [acceptedRewrites, setAcceptedRewrites] = useState([])    // rewrites user accepted
+  const [acceptedSkills, setAcceptedSkills] = useState([])        // skills user checked
+  const [acceptedSummary, setAcceptedSummary] = useState(null)    // summary user opted in
 
   const [freshnessOpen, setFreshnessOpen] = useState(false)
   const [wizardOpen, setWizardOpen] = useState(false)
   const [parsedResumeData, setParsedResumeData] = useState(null)
+  const parsedResumeRef = useRef(null)  // same data as state but readable synchronously
   const [sessionResume, setSessionResume] = useState(null)
   const [resumeUpdated, setResumeUpdated] = useState(false)
   const [pendingFormData, setPendingFormData] = useState(null)
@@ -862,19 +1204,28 @@ function App() {
   const handleOpenWizard = async () => {
     // User wants to update — parse first so wizard fields are pre-filled, THEN open wizard
     setFreshnessOpen(false)
+    // If already edited this session, open wizard with saved data immediately
+    if (sessionResume) {
+      parsedResumeRef.current = sessionResume
+      setWizardOpen(true)
+      return
+    }
     setLoading(true)
     try {
       const parseRes = await axios.post(`${API_URL}/parse-resume`, pendingFormData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       }).catch(() => null)
-      setParsedResumeData(parseRes?.data?.data || null)
+      const parsed = parseRes?.data?.data || null
+      parsedResumeRef.current = parsed   // store in ref — available synchronously on next line
+      setParsedResumeData(parsed)        // also update state for other uses
     } catch {}
     setLoading(false)
-    setWizardOpen(true)
+    setWizardOpen(true)  // wizard mounts NOW — parsedResumeRef.current is already set
   }
 
   const handleWizardSave = async (updatedData) => {
     setSessionResume(updatedData)
+    parsedResumeRef.current = updatedData  // keep ref in sync for re-opens
     setResumeUpdated(true)
     setWizardOpen(false)
     const fd = buildFormData()
@@ -882,11 +1233,22 @@ function App() {
     await runAnalysis(fd, updatedData)
   }
 
+  // Pull a numeric ATS score out of the AI text e.g. "Overall ATS Score: 72/100"
+  const extractAtsScore = (text) => {
+    if (!text) return null
+    const m = text.match(/(\d{1,3})\s*\/\s*100/)
+    return m ? parseInt(m[1]) : null
+  }
+
   const runAnalysis = async (formData, overrideResumeData = null) => {
     setLoading(true); setAnalyzing(true); setResult(null); setAnalysisStep(0)
     try {
       const cacheKey = `${jdText || jdFile?.name || jdUrl}__${resumeFile?.name}__${resumeUpdated}`
-      if (analysisCache[cacheKey] && !overrideResumeData) { setResult(analysisCache[cacheKey]); return }
+      if (analysisCache[cacheKey] && !overrideResumeData) {
+        setResult(analysisCache[cacheKey])
+        setLoading(false); setAnalyzing(false)
+        return
+      }
 
       const interval = setInterval(() => setAnalysisStep(p => p < analysisSteps.length - 1 ? p + 1 : p), 3000)
       const response = await axios.post(`${API_URL}/analyze`, formData, { headers: { 'Content-Type': 'multipart/form-data' } })
@@ -899,6 +1261,12 @@ function App() {
       }
       setResult(response.data)
       setAnalysisCache(p => ({ ...p, [cacheKey]: response.data }))
+
+      // Store the very first score so we can show before/after after wizard edits
+      if (!overrideResumeData && originalAtsScore === null) {
+        const score = extractAtsScore(response.data?.data?.ats_score?.score_analysis)
+        if (score) setOriginalAtsScore(score)
+      }
     } catch (err) {
       setError(err.response?.data?.error || err.message || 'An error occurred')
     } finally { setLoading(false); setAnalyzing(false) }
@@ -916,6 +1284,33 @@ function App() {
     // Deep-merge: if AI-enhanced work_experience lost achievements, restore from original
     const original = result?.data?.original_resume_data
     const data = { ...raw }
+
+    // Merge accepted rewrites into resume
+    // Strategy: fuzzy-match to replace in-place; anything unmatched gets appended
+    if (acceptedRewrites.length > 0 && data.work_experience) {
+      const applied = new Set()
+      data.work_experience = data.work_experience.map(exp => {
+        const achievements = (exp.achievements || []).map(ach => {
+          const match = acceptedRewrites.find((r, i) => !applied.has(i) && fuzzyMatch(r.original, ach))
+          if (match) {
+            applied.add(acceptedRewrites.indexOf(match))
+            return match.improved
+          }
+          return ach
+        })
+        // Append any rewrites that didn't match any bullet in this role
+        // (they show up somewhere, not silently dropped)
+        return { ...exp, achievements }
+      })
+      // Any still-unapplied rewrites: append to first role as new bullets
+      const unapplied = acceptedRewrites.filter((_, i) => !applied.has(i))
+      if (unapplied.length > 0 && data.work_experience.length > 0) {
+        data.work_experience[0].achievements = [
+          ...(data.work_experience[0].achievements || []),
+          ...unapplied.map(r => r.improved)
+        ]
+      }
+    }
     if (original && data.work_experience) {
       data.work_experience = data.work_experience.map((exp, i) => {
         const origExp = original.work_experience?.[i]
@@ -930,6 +1325,25 @@ function App() {
     // Also restore top-level achievements if empty
     if (original && (!data.achievements?.filter(Boolean).length) && original.achievements?.filter(Boolean).length) {
       data.achievements = original.achievements
+    }
+
+    // ── Merge accepted skill tokens into technical_skills
+    // We append them to 'tools' as a catch-all — the resume template renders all categories
+    if (acceptedSkills.length > 0) {
+      const existing = data.technical_skills || {}
+      const existingTools = existing.tools || []
+      // Avoid duplicates (case-insensitive)
+      const existingLower = existingTools.map(s => s.toLowerCase())
+      const newSkills = acceptedSkills.filter(s => !existingLower.includes(s.toLowerCase()))
+      data.technical_skills = {
+        ...existing,
+        tools: [...existingTools, ...newSkills]
+      }
+    }
+
+    // ── Merge accepted summary at top of resume
+    if (acceptedSummary) {
+      data.summary = acceptedSummary
     }
 
     const skills = data.technical_skills || {}
@@ -1177,6 +1591,12 @@ ${(()=>{
 ` : ''
 })()}
 
+${data.summary ? `
+<!-- SUMMARY -->
+<div class="section-title">Professional Summary</div>
+<p style="font-size:10.2pt; line-height:1.6; margin-bottom:12pt; color:#1e293b;">${data.summary}</p>
+` : ''}
+
 ${(data.work_experience || []).length ? `
 <!-- WORK EXPERIENCE -->
 <div class="section-title">Work Experience</div>
@@ -1237,22 +1657,38 @@ ${(data.certifications || []).filter(Boolean).length ? `
     if (!win) alert('Please allow pop-ups for this site to preview your resume.')
   }
 
-  const gapKeywords = result?.data?.resume_suggestions?.suggestions ? extractGaps(result.data.resume_suggestions.suggestions) : []
+  const gapKeywords = result?.data?.critical_gaps ? extractGaps(result.data.critical_gaps) : []
 
-  // Mock rewrites from work experience diff
+  // Parse AI suggestion text for "Original: / Improved:" pairs
   const buildRewrites = () => {
-    if (!result?.data?.original_resume_data || !result?.data?.resume_data) return []
-    const orig = result.data.original_resume_data.work_experience || []
-    const opt = result.data.resume_data.work_experience || []
     const out = []
-    orig.forEach((exp, ei) => {
-      const optExp = opt[ei]
-      if (!optExp) return
-      ;(exp.achievements || []).forEach((ach, ai) => {
-        const improved = optExp.achievements?.[ai]
-        if (improved && improved !== ach) out.push({ original: ach, improved, reason: `${exp.title} @ ${exp.company}` })
-      })
-    })
+    const seen = new Set()
+    const suggText = result?.data?.rewrites || ''
+    if (!suggText) return out
+
+    const lines = suggText.split('\n')
+    let pendingOriginal = null
+
+    for (const raw of lines) {
+      const line = raw.trim()
+      if (!line) continue
+      // Match "Original: ..." — strip any leading asterisks/bold markers
+      const origMatch = line.match(/^\*{0,2}Original:\*{0,2}\s*(.{10,})/i)
+      // Match "Improved: ..."
+      const imprMatch = line.match(/^\*{0,2}Improved:\*{0,2}\s*(.{10,})/i)
+
+      if (origMatch) {
+        pendingOriginal = origMatch[1].replace(/[*"]/g, '').trim()
+      } else if (imprMatch && pendingOriginal) {
+        const improved = imprMatch[1].replace(/[*"]/g, '').trim()
+        const key = pendingOriginal.slice(0, 40)
+        if (!seen.has(key) && improved !== pendingOriginal) {
+          seen.add(key)
+          out.push({ original: pendingOriginal, improved })
+        }
+        pendingOriginal = null
+      }
+    }
     return out.slice(0, 5)
   }
   const rewrites = buildRewrites()
@@ -1265,7 +1701,7 @@ ${(data.certifications || []).filter(Boolean).length ? `
         onConfirmLatest={handleConfirmLatest} onOpenWizard={handleOpenWizard} />
       {wizardOpen && (
         <ResumeUpdateWizard open={wizardOpen} onClose={() => setWizardOpen(false)}
-          parsedData={sessionResume || parsedResumeData} onSave={handleWizardSave} />
+          parsedData={parsedResumeRef.current} onSave={handleWizardSave} />
       )}
 
       <Box sx={{ bgcolor: 'background.default', minHeight: '100vh', pb: 10 }}>
@@ -1410,56 +1846,204 @@ ${(data.certifications || []).filter(Boolean).length ? `
                   </Stack>
                 </Paper>
 
-                {/* ATS Score */}
-                <Card elevation={3} sx={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%)', color: 'white', borderRadius: '18px' }}>
-                  <CardContent sx={{ p: { xs: 3, md: 4 } }}>
-                    <Stack direction="row" alignItems="center" spacing={2} mb={2.5}>
-                      <Psychology sx={{ fontSize: 32 }} />
-                      <Typography variant="h5" fontWeight={800}>ATS Score</Typography>
-                    </Stack>
-                    <Paper elevation={0} sx={{ p: { xs: 2.5, md: 3.5 }, bgcolor: 'rgba(255,255,255,0.97)', color: 'text.primary', borderRadius: '14px' }}>
-                      <FormattedText text={formatAIResponse(result.data.ats_score.score_analysis)} />
-                    </Paper>
-                  </CardContent>
-                </Card>
+                {/* ATS Score — parsed visual breakdown */}
+                {(() => {
+                  const raw = result.data.ats_score?.score_analysis || ''
+                  const currentScore = extractAtsScore(raw)
+                  const diff = (resumeUpdated && originalAtsScore && currentScore) ? currentScore - originalAtsScore : null
 
-                {/* ── ETHICAL: Gap Analysis */}
-                {gapKeywords.length > 0 && (
-                  <Paper elevation={1} sx={{ p: { xs: 3, md: 4 }, borderRadius: '18px', border: '1.5px solid', borderColor: alpha(theme.palette.warning.main, 0.3) }}>
-                    <GapAnalysis gaps={gapKeywords} />
-                  </Paper>
-                )}
+                  // Parse breakdown scores from "Keyword Match (20/40)" etc
+                  const parseBreakdown = (text) => {
+                    const patterns = [
+                      { label: 'Keywords', max: 40, re: /Keyword[^(]*\((\d+)\/40\)/i },
+                      { label: 'Experience', max: 30, re: /Experience[^(]*\((\d+)\/30\)/i },
+                      { label: 'Skills', max: 20, re: /Skills[^(]*\((\d+)\/20\)/i },
+                      { label: 'Education', max: 10, re: /Education[^(]*\((\d+)\/10\)/i },
+                    ]
+                    return patterns.map(p => {
+                      const m = text.match(p.re)
+                      return { ...p, score: m ? parseInt(m[1]) : null }
+                    }).filter(p => p.score !== null)
+                  }
 
-                {/* ── ETHICAL: Bullet Rewrites with Accept/Reject */}
-                {rewrites.length > 0 && (
-                  <Paper elevation={1} sx={{ p: { xs: 3, md: 4 }, borderRadius: '18px' }}>
-                    <BulletRewrites rewrites={rewrites} />
-                  </Paper>
-                )}
+                  // Parse a bullet list section from the raw text
+                  const parseList = (text, header) => {
+                    const idx = text.search(new RegExp(header, 'i'))
+                    if (idx === -1) return []
+                    const after = text.slice(idx)
+                    const lines = after.split('\n').slice(1)
+                    const items = []
+                    for (const l of lines) {
+                      const clean = l.trim().replace(/^[-•*▸\d.]+\s*/, '').trim()
+                      if (!clean || /^(Top|Overall|Breakdown|Keyword|Experience|Strength|Improvement)/i.test(clean)) break
+                      if (clean.length > 3) items.push(clean)
+                      if (items.length >= 5) break
+                    }
+                    return items
+                  }
 
-                {/* Expandable sections */}
-                <Paper elevation={1} sx={{ borderRadius: '18px', overflow: 'hidden' }}>
-                  {[
-                    { icon: <TipsAndUpdates color="warning" />, label: 'Full Optimization Tips', content: <FormattedText text={formatAIResponse(result.data.resume_suggestions?.suggestions)} /> },
-                    { icon: <School color="success" />, label: 'Interview Prep', content: <FormattedText text={formatAIResponse(result.data.interview_prep?.interview_prep)} /> },
-                    { icon: <TipsAndUpdates color="primary" />, label: 'Job Requirements Analysis', content: <FormattedText text={formatAIResponse(result.data.jd_analysis?.analysis)} /> },
-                  ].map(({ icon, label, content }, idx) => (
-                    <Box key={idx}>
-                      {idx > 0 && <Divider />}
-                      <Accordion disableGutters elevation={0} sx={{ '&:before': { display: 'none' } }}>
-                        <AccordionSummary expandIcon={<ExpandMore />} sx={{ px: { xs: 2.5, md: 3.5 }, py: { xs: 1.5, md: 2 }, '&:hover': { bgcolor: '#fafbfc' } }}>
-                          <Stack direction="row" alignItems="center" spacing={1.5}>
-                            {icon}
-                            <Typography variant="h6" fontWeight={700} fontSize={{ xs: '1rem', md: '1.1rem' }}>{label}</Typography>
+                  const breakdown = parseBreakdown(raw)
+                  const strengths = parseList(raw, 'Strength')
+                  const improvements = parseList(raw, 'Improvement')
+                  const scoreColor = currentScore >= 70 ? '#4ade80' : currentScore >= 50 ? '#fbbf24' : '#f87171'
+
+                  return (
+                    <Card elevation={3} sx={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%)', color: 'white', borderRadius: '18px' }}>
+                      <CardContent sx={{ p: { xs: 3, md: 4 } }}>
+
+                        {/* Header row */}
+                        <Stack direction="row" alignItems="center" justifyContent="space-between" mb={3} flexWrap="wrap" gap={2}>
+                          <Stack direction="row" alignItems="center" spacing={2}>
+                            <Psychology sx={{ fontSize: 32 }} />
+                            <Box>
+                              <Typography variant="h5" fontWeight={800}>ATS Score</Typography>
+                              <Typography variant="caption" sx={{ opacity: 0.6 }}>How well your resume matches this job</Typography>
+                            </Box>
                           </Stack>
-                        </AccordionSummary>
-                        <AccordionDetails sx={{ px: { xs: 2.5, md: 3.5 }, pb: { xs: 2.5, md: 3.5 } }}>
-                          {content}
-                        </AccordionDetails>
-                      </Accordion>
-                    </Box>
-                  ))}
-                </Paper>
+                          {/* Score display — before/after if re-analyzed, else just current */}
+                          <Stack direction="row" alignItems="center" spacing={2}>
+                            {diff !== null && (
+                              <>
+                                <Box textAlign="center">
+                                  <Typography variant="caption" sx={{ opacity: 0.55, display: 'block' }}>BEFORE</Typography>
+                                  <Typography variant="h4" fontWeight={800} sx={{ opacity: 0.7 }}>{originalAtsScore}</Typography>
+                                </Box>
+                                <Typography variant="h4" sx={{ opacity: 0.3 }}>→</Typography>
+                              </>
+                            )}
+                            <Box textAlign="center">
+                              {diff !== null && <Typography variant="caption" sx={{ opacity: 0.55, display: 'block' }}>NOW</Typography>}
+                              <Typography variant="h2" fontWeight={900} sx={{ color: scoreColor, lineHeight: 1 }}>
+                                {currentScore}
+                                <Typography component="span" variant="h5" sx={{ opacity: 0.5, fontWeight: 400 }}>/100</Typography>
+                              </Typography>
+                            </Box>
+                            {diff !== null && (
+                              <Chip label={diff > 0 ? `+${diff} 🚀` : diff < 0 ? `${diff} ⚠️` : '±0'}
+                                sx={{ bgcolor: diff > 0 ? '#16a34a' : diff < 0 ? '#dc2626' : '#475569', color: 'white', fontWeight: 800, fontSize: '1rem' }} />
+                            )}
+                          </Stack>
+                        </Stack>
+
+                        {/* Score bar */}
+                        <LinearProgress variant="determinate" value={currentScore || 0}
+                          sx={{ mb: 3, height: 8, borderRadius: 4, bgcolor: 'rgba(255,255,255,0.12)',
+                            '& .MuiLinearProgress-bar': { bgcolor: scoreColor, borderRadius: 4 } }} />
+
+                        {/* Breakdown bars */}
+                        {breakdown.length > 0 && (
+                          <Paper elevation={0} sx={{ p: 2.5, borderRadius: '14px', bgcolor: 'rgba(255,255,255,0.07)', mb: 2.5 }}>
+                            <Typography variant="caption" fontWeight={700} sx={{ opacity: 0.7, textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', mb: 2 }}>
+                              Score Breakdown
+                            </Typography>
+                            <Stack spacing={1.5}>
+                              {breakdown.map((b, i) => (
+                                <Box key={i}>
+                                  <Stack direction="row" justifyContent="space-between" mb={0.5}>
+                                    <Typography variant="caption" fontWeight={600}>{b.label}</Typography>
+                                    <Typography variant="caption" fontWeight={700}>{b.score}/{b.max}</Typography>
+                                  </Stack>
+                                  <LinearProgress variant="determinate" value={(b.score / b.max) * 100}
+                                    sx={{ height: 5, borderRadius: 3, bgcolor: 'rgba(255,255,255,0.12)',
+                                      '& .MuiLinearProgress-bar': { bgcolor: (b.score/b.max) >= 0.7 ? '#4ade80' : (b.score/b.max) >= 0.5 ? '#fbbf24' : '#f87171', borderRadius: 3 }
+                                    }} />
+                                </Box>
+                              ))}
+                            </Stack>
+                          </Paper>
+                        )}
+
+                        {/* Strengths + Improvements side by side */}
+                        <Grid container spacing={2}>
+                          {strengths.length > 0 && (
+                            <Grid size={{ xs: 12, md: 6 }}>
+                              <Paper elevation={0} sx={{ p: 2, borderRadius: '12px', bgcolor: 'rgba(74,222,128,0.1)', height: '100%' }}>
+                                <Typography variant="caption" fontWeight={700} sx={{ color: '#4ade80', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', mb: 1.5 }}>
+                                  ✅ What you're good at
+                                </Typography>
+                                <Stack spacing={1}>
+                                  {strengths.map((s, i) => (
+                                    <Typography key={i} variant="body2" sx={{ color: 'rgba(255,255,255,0.85)', lineHeight: 1.5 }}>• {s}</Typography>
+                                  ))}
+                                </Stack>
+                              </Paper>
+                            </Grid>
+                          )}
+                          {improvements.length > 0 && (
+                            <Grid size={{ xs: 12, md: 6 }}>
+                              <Paper elevation={0} sx={{ p: 2, borderRadius: '12px', bgcolor: 'rgba(251,191,36,0.1)', height: '100%' }}>
+                                <Typography variant="caption" fontWeight={700} sx={{ color: '#fbbf24', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', mb: 1.5 }}>
+                                  ⚠️ Gaps to address
+                                </Typography>
+                                <Stack spacing={1}>
+                                  {improvements.map((s, i) => (
+                                    <Typography key={i} variant="body2" sx={{ color: 'rgba(255,255,255,0.85)', lineHeight: 1.5 }}>• {s}</Typography>
+                                  ))}
+                                </Stack>
+                              </Paper>
+                            </Grid>
+                          )}
+                        </Grid>
+
+                      </CardContent>
+                    </Card>
+                  )
+                })()}
+
+                {/* GapAnalysis removed — covered in Action Center Skills tab */}
+
+                {/* ── ACTION CENTER — backend now sends pre-parsed sections */}
+                {(() => {
+                  // Skills: parse "- SkillName" lines from backend skills section
+                  const skillTokens = (result.data.skills || '')
+                    .split('\n')
+                    .map(l => l.replace(/^[-•*▸\d.]+\s*/, '').trim())
+                    .filter(l => l.length > 0 && l.length < 40 && !/^\*\*/.test(l))
+
+                  // Gaps: split into individual gap lines
+                  const gapLines = (result.data.critical_gaps || '')
+                    .split('\n')
+                    .map(l => l.replace(/^[-•*▸\d.]+\s*/, '').trim())
+                    .filter(l => l.length > 10)
+
+                  const aiSummary = (result.data.summary || '').replace(/\*\*/g, '').trim()
+
+                  return (
+                    <ResumeBuildPanel
+                      rewrites={rewrites}
+                      skillTokens={skillTokens}
+                      gapLines={gapLines}
+                      aiSummary={aiSummary}
+                      gapsText={result.data.critical_gaps || ''}
+                      rewritesText={result.data.rewrites || ''}
+                      skillsText={result.data.skills || ''}
+                      interviewText={result.data.interview_prep?.interview_prep || ''}
+                      originalResumeData={result.data.original_resume_data}
+                      acceptedRewrites={acceptedRewrites}
+                      onAcceptedRewrites={setAcceptedRewrites}
+                      onSkillsChange={setAcceptedSkills}
+                      onSummaryChange={setAcceptedSummary}
+                      currentAtsScore={extractAtsScore(result.data.ats_score?.score_analysis)}
+                    />
+                  )
+                })()}
+
+                {/* Interview Prep — from combined AI call */}
+                {result.data.interview_prep?.interview_prep && (
+                  <Paper elevation={1} sx={{ borderRadius: '18px', overflow: 'hidden' }}>
+                    <Accordion disableGutters elevation={0} sx={{ '&:before': { display: 'none' } }}>
+                      <AccordionSummary expandIcon={<ExpandMore />} sx={{ px: { xs: 2.5, md: 3.5 }, py: { xs: 1.5, md: 2 }, '&:hover': { bgcolor: '#fafbfc' } }}>
+                        <Stack direction="row" alignItems="center" spacing={1.5}>
+                          <School color="success" />
+                          <Typography variant="h6" fontWeight={700} fontSize={{ xs: '1rem', md: '1.1rem' }}>Interview Prep</Typography>
+                        </Stack>
+                      </AccordionSummary>
+                      <AccordionDetails sx={{ px: { xs: 2.5, md: 3.5 }, pb: { xs: 2.5, md: 3.5 } }}>
+                        <FormattedText text={formatAIResponse(result.data.interview_prep.interview_prep)} />
+                      </AccordionDetails>
+                    </Accordion>
+                  </Paper>
+                )}
 
                 {/* Learning Resources */}
                 {result.data.youtube_resources?.length > 0 && (
@@ -1503,6 +2087,12 @@ ${(data.certifications || []).filter(Boolean).length ? `
                   <Typography variant="body1" sx={{ mb: 1, opacity: 0.85 }}>
                     {resumeUpdated ? 'Preview your updated resume and save it as a PDF.' : 'Preview your optimized resume and save it as a PDF.'}
                   </Typography>
+                  {acceptedRewrites.length > 0 && (
+                    <Chip
+                      label={`✓ ${acceptedRewrites.length} rewritten bullet${acceptedRewrites.length > 1 ? 's' : ''} included`}
+                      sx={{ mb: 2, bgcolor: 'rgba(255,255,255,0.2)', color: 'white', fontWeight: 700 }}
+                    />
+                  )}
                   <Typography variant="body2" sx={{ mb: 3, opacity: 0.65 }}>
                     Opens a formatted preview → click "Save as PDF" or press Ctrl+P
                   </Typography>
